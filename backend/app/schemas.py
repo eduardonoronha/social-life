@@ -29,6 +29,16 @@ class JournalResponse(BaseModel):
 class ConnectionCreate(BaseModel):
     addressee_id: str
 
+class ProfileUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    bio: str | None = Field(default=None, max_length=1000)
+    city: str | None = Field(default=None, max_length=120)
+    interests: list[str] = Field(default_factory=list, max_length=20)
+    profile_visible: bool = False
+
+class ConnectionCategoryUpdate(BaseModel):
+    category: str | None = Field(default=None, max_length=30)
+
 class MomentCreate(BaseModel):
     content: str = Field(min_length=1, max_length=10000)
     shared_with_id: str | None = None

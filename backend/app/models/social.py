@@ -12,6 +12,9 @@ class Connection(Base):
     requester_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
     addressee_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    blocked_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    requester_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    addressee_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

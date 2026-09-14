@@ -42,6 +42,18 @@ async def init_db():
             "NOT NULL DEFAULT 'America/Sao_Paulo'"
         ))
 
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS city VARCHAR(120)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS interests TEXT"))
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_visible BOOLEAN "
+            "NOT NULL DEFAULT FALSE"
+        ))
+
+        await conn.execute(text("ALTER TABLE connections ADD COLUMN IF NOT EXISTS blocked_by_id VARCHAR(36)"))
+        await conn.execute(text("ALTER TABLE connections ADD COLUMN IF NOT EXISTS requester_category VARCHAR(30)"))
+        await conn.execute(text("ALTER TABLE connections ADD COLUMN IF NOT EXISTS addressee_category VARCHAR(30)"))
+
         await conn.execute(text(
             "ALTER TABLE usage_sessions "
             "ADD COLUMN IF NOT EXISTS hard_stop_at TIMESTAMPTZ"
