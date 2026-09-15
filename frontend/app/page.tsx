@@ -49,6 +49,19 @@ type SharedMoment = {
   created_at: string;
 };
 
+type PrivateMessage = {
+  id: string;
+  sender_id: string;
+  sender_name: string | null;
+  recipient_id: string;
+  recipient_name: string | null;
+  content: string;
+  reply_to_id: string | null;
+  attachment_ids: string[];
+  reactions: Record<string, string>;
+  created_at: string;
+};
+
 type Profile = {
   id: string;
   name: string;
@@ -84,6 +97,12 @@ export default function Home() {
   const [connections, setConnections] = useState<Relationship[]>([]);
   const [requests, setRequests] = useState<Relationship[]>([]);
   const [sharedMoments, setSharedMoments] = useState<SharedMoment[]>([]);
+  const [receivedMessages, setReceivedMessages] = useState<PrivateMessage[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [conversationMessages, setConversationMessages] = useState<PrivateMessage[]>([]);
+  const [messageContent, setMessageContent] = useState("");
+  const [replyToMessage, setReplyToMessage] = useState<PrivateMessage | null>(null);
+  const [messageFiles, setMessageFiles] = useState<File[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [shareContent, setShareContent] = useState("");
   const [shareAudience, setShareAudience] = useState<ShareAudience>("person");
@@ -92,10 +111,11 @@ export default function Home() {
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const api = useCallback(async (path: string, init: RequestInit = {}) => {
+    const isMultipart = typeof FormData !== "undefined" && init.body instanceof FormData;
     return fetch(`${API}${path}`, {
       ...init,
       headers: {
-        "Content-Type": "application/json",
+        ...(!isMultipart ? { "Content-Type": "application/json" } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(init.headers ?? {}),
       },
@@ -185,6 +205,18 @@ export default function Home() {
     if (!token) return;
     const response = await api("/social/moments/inbox");
     if (response.ok) setSharedMoments(await response.json());
+  }, [api, token]);
+
+  const loadReceivedMessages = useCallback(async () => {
+    if (!token) return;
+    const response = await api("/social/messages/inbox");
+    if (response.ok) setReceivedMessages(await response.json());
+  }, [api, token]);
+
+  const loadConversation = useCallback(async (personId: string) => {
+    if (!token || !personId) return;
+    const response = await api(`/social/messages/${personId}`);
+    if (response.ok) setConversationMessages(await response.json());
   }, [api, token]);
 
   const loadProfile = useCallback(async () => {
@@ -349,6 +381,78 @@ export default function Home() {
     setMessage("Compartilhamento enviado.");
   }
 
+  async function sendPrivateMessage() {
+    const value = messageContent.trim();
+    if (!activeConversationId || (!value && messageFiles.length === 0)) return;
+
+    const attachmentIds: string[] = [];
+    for (const file of messageFiles) {
+      const formData = new FormData();
+      formData.append("file", file);
+      const uploadResponse = await api("/social/uploads", {
+        method: "POST",
+        body: formData,
+      });
+      const uploadData = await uploadResponse.json();
+      if (!uploadResponse.ok) {
+        setMessage(errorMessage(uploadData.detail, "Não foi possível enviar o arquivo."));
+        return;
+      }
+      attachmentIds.push(uploadData.id);
+    }
+
+    const response = await api("/social/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        recipient_id: activeConversationId,
+        content: value || "Arquivo enviado",
+        ...(replyToMessage ? { reply_to_id: replyToMessage.id } : {}),
+        attachment_ids: attachmentIds,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(errorMessage(data.detail, "Não foi possível enviar a mensagem."));
+      return;
+    }
+
+    setMessageContent("");
+    setMessageFiles([]);
+    setReplyToMessage(null);
+    await loadConversation(activeConversationId);
+  }
+
+  async function downloadAttachment(attachmentId: string) {
+    const preview = window.open("about:blank", "_blank");
+    const response = await api(`/social/uploads/${attachmentId}/content`);
+    if (!response.ok) {
+      preview?.close();
+      const data = await response.json();
+      setMessage(errorMessage(data.detail, "Não foi possível abrir o arquivo."));
+      return;
+    }
+
+    const blobUrl = URL.createObjectURL(await response.blob());
+    if (preview) {
+      preview.location.href = blobUrl;
+    } else {
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = "arquivo";
+      link.click();
+    }
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  }
+
+  async function toggleMessageReaction(message: PrivateMessage) {
+    const reaction = profile?.id && message.reactions[profile.id] === "heart" ? null : "heart";
+    const response = await api(`/social/messages/${message.id}/reaction`, {
+      method: "POST",
+      body: JSON.stringify({ reaction }),
+    });
+    if (response.ok && activeConversationId) await loadConversation(activeConversationId);
+  }
+
   useEffect(() => {
     if (!token) return;
 
@@ -356,11 +460,13 @@ export default function Home() {
     loadEntries();
     loadSocial();
     loadIncomingMoments();
+    loadReceivedMessages();
     loadProfile();
 
     const refreshInterval = window.setInterval(() => {
       loadSocial();
       loadIncomingMoments();
+      loadReceivedMessages();
     }, 5000);
 
     return () => {
@@ -370,7 +476,50 @@ export default function Home() {
         heartbeat.current = null;
       }
     };
-  }, [token, start, loadEntries, loadSocial, loadIncomingMoments, loadProfile]);
+  }, [token, start, loadEntries, loadSocial, loadIncomingMoments, loadReceivedMessages, loadProfile]);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      setConversationMessages([]);
+      return;
+    }
+
+    loadConversation(activeConversationId);
+    const conversationInterval = window.setInterval(() => {
+      loadConversation(activeConversationId);
+    }, 5000);
+
+    return () => window.clearInterval(conversationInterval);
+  }, [activeConversationId, loadConversation]);
+
+  useEffect(() => {
+    if (!token) return;
+    const websocketUrl = `${API.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(token)}`;
+    const socket = new WebSocket(websocketUrl);
+    socket.onmessage = (event) => {
+      const payload = JSON.parse(event.data) as {
+        type: string;
+        message?: PrivateMessage;
+      };
+      if (payload.type === "message.created" && payload.message) {
+        const incoming = payload.message;
+        if (incoming.recipient_id === profile?.id) {
+          setReceivedMessages((current) =>
+            current.some((item) => item.id === incoming.id) ? current : [incoming, ...current]
+          );
+        }
+        if (incoming.sender_id === activeConversationId || incoming.recipient_id === activeConversationId) {
+          setConversationMessages((current) =>
+            current.some((item) => item.id === incoming.id) ? current : [...current, incoming]
+          );
+        }
+      }
+      if (payload.type === "message.reaction" && activeConversationId) {
+        loadConversation(activeConversationId);
+      }
+    };
+    return () => socket.close();
+  }, [token, activeConversationId, loadConversation]);
 
   useEffect(() => {
     if (!token) return;
@@ -574,6 +723,98 @@ export default function Home() {
       </section>
 
       <section style={card}>
+        <h2>Mensagens recebidas</h2>
+        {receivedMessages.length === 0 && <p>Nenhuma mensagem recebida.</p>}
+        {receivedMessages.map((privateMessage) => (
+          <article key={privateMessage.id} style={personCard}>
+            <small>{privateMessage.sender_name ?? "Pessoa"} · {new Date(privateMessage.created_at).toLocaleString("pt-BR")}</small>
+            <p>{privateMessage.content}</p>
+            <button
+              onClick={() => setActiveConversationId(privateMessage.sender_id)}
+              style={secondary}
+            >
+              Abrir conversa
+            </button>
+          </article>
+        ))}
+      </section>
+
+      <section style={card}>
+        <h2>Mensagens privadas</h2>
+        <p>Converse apenas com conexões aceitas.</p>
+        {connections.length === 0 ? (
+          <p>Você precisa ter uma conexão aceita para enviar mensagens.</p>
+        ) : (
+          <>
+            <label style={fieldLabel}>
+              Conversa
+              <select
+                value={activeConversationId}
+                onChange={(e) => setActiveConversationId(e.target.value)}
+                style={select}
+              >
+                <option value="">Selecione uma conexão</option>
+                {connections.map((connection) => (
+                  <option key={connection.person.id} value={connection.person.id}>
+                    {connection.person.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {activeConversationId && (
+              <>
+                <div style={messageList}>
+                  {conversationMessages.length === 0 && <p>Nenhuma mensagem nesta conversa.</p>}
+                  {conversationMessages.map((privateMessage) => (
+                    <article key={privateMessage.id} style={messageBubble}>
+                      <small>
+                        {privateMessage.sender_name ?? "Pessoa"} · {new Date(privateMessage.created_at).toLocaleString("pt-BR")}
+                      </small>
+                      {privateMessage.reply_to_id && <small>Respondendo a uma mensagem anterior</small>}
+                      <p>{privateMessage.content}</p>
+                      {privateMessage.attachment_ids.length > 0 && (
+                        <div style={row}>
+                          {privateMessage.attachment_ids.map((attachmentId) => (
+                            <button key={attachmentId} onClick={() => downloadAttachment(attachmentId)} style={secondary}>
+                              Abrir arquivo
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div style={row}>
+                        <button onClick={() => setReplyToMessage(privateMessage)} style={secondary}>Responder</button>
+                        <button onClick={() => toggleMessageReaction(privateMessage)} style={secondary}>
+                          {privateMessage.reactions[profile?.id ?? ""] === "heart" ? "♥" : "♡"}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                {replyToMessage && <p>Respondendo: {replyToMessage.content}</p>}
+                <textarea
+                  rows={3}
+                  disabled={!active}
+                  value={messageContent}
+                  onChange={(e) => setMessageContent(e.target.value)}
+                  placeholder="Escreva uma mensagem privada"
+                  style={textarea}
+                />
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,audio/*,application/pdf,application/zip,text/plain"
+                  onChange={(e) => setMessageFiles(Array.from(e.target.files ?? []))}
+                />
+                {messageFiles.length > 0 && <small>{messageFiles.length} arquivo(s) selecionado(s)</small>}
+                <button disabled={!active} onClick={sendPrivateMessage} style={button}>Enviar mensagem</button>
+              </>
+            )}
+          </>
+        )}
+      </section>
+
+      <section style={card}>
         <h2>Pessoas e relacionamentos</h2>
         <p>Encontre pessoas e envie um convite. Uma conexão só existe depois do aceite mútuo.</p>
         <div style={row}>
@@ -746,6 +987,20 @@ const shareList = {
   display: "grid",
   gap: 8,
   margin: "12px 0",
+};
+
+const messageList = {
+  display: "grid",
+  gap: 10,
+  maxHeight: 420,
+  overflowY: "auto" as const,
+  margin: "16px 0",
+};
+
+const messageBubble = {
+  border: "1px solid #eee",
+  borderRadius: 8,
+  padding: 12,
 };
 
 const checkLabelRow = {

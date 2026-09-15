@@ -1,14 +1,22 @@
 from contextlib import asynccontextmanager
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
-from app.api import auth, life, social, usage, profile, ai
+from app.api import auth, life, realtime, social, usage, profile, ai
+from app.services.storage import init_storage
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:
+        await init_storage()
+    except Exception:
+        logger.warning("Object storage is unavailable; uploads will fail until it is reachable")
     yield
 
 
@@ -36,6 +44,7 @@ app.include_router(social.router)
 app.include_router(usage.router)
 app.include_router(profile.router)
 app.include_router(ai.router)
+app.include_router(realtime.router)
 
 
 @app.get("/health")

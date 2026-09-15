@@ -11,6 +11,8 @@ Requires-Dist: python-jose[cryptography]<4,>=3.5
 Requires-Dist: passlib[bcrypt]<2,>=1.7
 Requires-Dist: bcrypt<5
 Requires-Dist: email-validator<3,>=2.2
+Requires-Dist: minio<8,>=7.2
+Requires-Dist: python-multipart<1,>=0.0.20
 Provides-Extra: dev
 Requires-Dist: pytest<9,>=8.4; extra == "dev"
 Requires-Dist: pytest-asyncio<2,>=1.1; extra == "dev"

@@ -15,7 +15,9 @@ dependencies = [
   "python-jose[cryptography]>=3.5,<4",
   "passlib[bcrypt]>=1.7,<2",
   "bcrypt<5",
-  "email-validator>=2.2,<3"
+  "email-validator>=2.2,<3",
+  "minio>=7.2,<8",
+  "python-multipart>=0.0.20,<1"
 ]
 
 [project.optional-dependencies]

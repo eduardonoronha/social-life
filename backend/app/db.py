@@ -39,7 +39,7 @@ async def init_db():
     # Import models so SQLAlchemy knows all tables.
     from app.models.user import User
     from app.models.life import JournalEntry
-    from app.models.social import Connection, Moment
+    from app.models.social import Attachment, Connection, Message, Moment
     from app.models.usage import UsageSession
     from app.models.permissions import AIPermission
 
@@ -63,6 +63,9 @@ async def init_db():
                 ("audience", "audience VARCHAR(30) NOT NULL DEFAULT 'person'"),
                 ("shared_with_ids", "shared_with_ids TEXT"),
                 ("group_id", "group_id VARCHAR(36)"),
+            ],
+            "messages": [
+                ("attachment_ids", "attachment_ids TEXT"),
             ],
             "usage_sessions": [
                 ("hard_stop_at", "hard_stop_at TIMESTAMPTZ"),

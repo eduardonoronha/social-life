@@ -1,18 +1,23 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.deps import current_user
-from app.models.social import Connection, Moment
+from app.models.social import Attachment, Connection, Message, Moment
 from app.models.user import User
-from app.schemas import ConnectionCategoryUpdate, ConnectionCreate, MomentCreate, MomentResponse
+from app.schemas import ConnectionCategoryUpdate, ConnectionCreate, MessageCreate, MessageReaction, MomentCreate
+from app.services.realtime import manager
+from app.services.storage import MAX_UPLOAD_BYTES, read_bytes, signed_download_url, store_bytes
 from app.services.usage import require_active
 
 router = APIRouter(prefix="/social", tags=["social"])
 
 CATEGORIES = {"family", "friend", "close_friend", "colleague", "acquaintance", "other"}
 VALID_AUDIENCES = {"person", "people", "group", "connections"}
+VALID_REACTIONS = {"like", "heart", "laugh", "sad", "thanks"}
 
 
 async def require_active_session(db: AsyncSession, user: User) -> None:
@@ -53,6 +58,33 @@ async def find_connection(connection_id: str, user: User, db: AsyncSession) -> C
     if not connection:
         raise HTTPException(404, "Relação não encontrada")
     return connection
+
+
+async def ensure_accepted_connection(user_id: str, other_id: str, db: AsyncSession) -> None:
+    connection = await db.scalar(select(Connection).where(
+        Connection.status == "accepted",
+        or_(
+            and_(Connection.requester_id == user_id, Connection.addressee_id == other_id),
+            and_(Connection.requester_id == other_id, Connection.addressee_id == user_id),
+        ),
+    ))
+    if not connection:
+        raise HTTPException(403, "Mensagens só podem ser trocadas entre conexões aceitas")
+
+
+def message_view(message: Message, user_names: dict[str, str]) -> dict:
+    return {
+        "id": message.id,
+        "sender_id": message.sender_id,
+        "sender_name": user_names.get(message.sender_id),
+        "recipient_id": message.recipient_id,
+        "recipient_name": user_names.get(message.recipient_id),
+        "content": message.content,
+        "reply_to_id": message.reply_to_id,
+        "attachment_ids": message.attachment_id_list,
+        "reactions": message.reaction_map,
+        "created_at": message.created_at,
+    }
 
 
 async def accepted_connection_ids_for(user: User, db: AsyncSession, target_ids: list[str] | None = None) -> list[str]:
@@ -267,6 +299,165 @@ async def set_connection_category(connection_id: str, data: ConnectionCategoryUp
         connection.addressee_category = data.category
     await db.commit()
     return {"category": data.category}
+
+
+@router.post("/uploads", status_code=201)
+async def upload_attachment(file: UploadFile = File(...), user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+    content_type = file.content_type or "application/octet-stream"
+    if not (content_type.startswith(("image/", "audio/")) or content_type in {
+        "application/pdf", "application/zip", "text/plain",
+    }):
+        raise HTTPException(415, "Tipo de arquivo não permitido")
+
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Arquivo excede o limite de 25 MB")
+    original_name = Path(file.filename or "arquivo").name[:255]
+    object_key, size_bytes = await store_bytes(content, content_type, original_name)
+    attachment = Attachment(
+        owner_id=user.id,
+        object_key=object_key,
+        original_name=original_name,
+        content_type=content_type,
+        size_bytes=size_bytes,
+    )
+    db.add(attachment)
+    await db.commit()
+    await db.refresh(attachment)
+    return {
+        "id": attachment.id,
+        "name": attachment.original_name,
+        "content_type": attachment.content_type,
+        "size_bytes": attachment.size_bytes,
+    }
+
+
+@router.get("/uploads/{attachment_id}")
+async def download_attachment(attachment_id: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+    attachment = await db.get(Attachment, attachment_id)
+    if not attachment:
+        raise HTTPException(404, "Arquivo não encontrado")
+    message = await db.scalar(select(Message).where(Message.attachment_ids.like(f'%"{attachment.id}"%')))
+    if attachment.owner_id != user.id and (not message or user.id not in {message.sender_id, message.recipient_id}):
+        raise HTTPException(404, "Arquivo não encontrado")
+    return {"url": await signed_download_url(attachment.object_key)}
+
+
+@router.get("/uploads/{attachment_id}/content")
+async def download_attachment_content(
+    attachment_id: str,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_active_session(db, user)
+    attachment = await db.get(Attachment, attachment_id)
+    if not attachment:
+        raise HTTPException(404, "Arquivo não encontrado")
+    message = await db.scalar(select(Message).where(Message.attachment_ids.like(f'%"{attachment.id}"%')))
+    if attachment.owner_id != user.id and (not message or user.id not in {message.sender_id, message.recipient_id}):
+        raise HTTPException(404, "Arquivo não encontrado")
+    try:
+        content = await read_bytes(attachment.object_key)
+    except Exception as exc:
+        raise HTTPException(404, "Arquivo não encontrado") from exc
+    return Response(
+        content=content,
+        media_type=attachment.content_type,
+        headers={"Content-Disposition": f'inline; filename="{attachment.original_name}"'},
+    )
+
+
+@router.get("/messages/inbox")
+async def list_received_messages(user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+    messages = (await db.scalars(select(Message).where(
+        Message.recipient_id == user.id,
+    ).order_by(Message.created_at.desc()).limit(100))).all()
+    sender_ids = {message.sender_id for message in messages}
+    people = await db.scalars(select(User).where(User.id.in_(sender_ids))) if sender_ids else []
+    user_names = {person.id: person.name for person in people}
+    return [message_view(message, user_names) for message in messages]
+
+
+@router.get("/messages/{person_id}")
+async def list_messages(person_id: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+    await ensure_accepted_connection(user.id, person_id, db)
+
+    people = await db.scalars(select(User).where(User.id.in_([user.id, person_id])))
+    user_names = {person.id: person.name for person in people}
+    messages = await db.scalars(select(Message).where(
+        or_(
+            and_(Message.sender_id == user.id, Message.recipient_id == person_id),
+            and_(Message.sender_id == person_id, Message.recipient_id == user.id),
+        ),
+    ).order_by(Message.created_at.asc()))
+    return [message_view(message, user_names) for message in messages]
+
+
+@router.post("/messages", status_code=201)
+async def create_message(data: MessageCreate, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+    content = data.content.strip()
+    if not content:
+        raise HTTPException(422, "Mensagem não pode ficar vazia")
+    if data.recipient_id == user.id:
+        raise HTTPException(400, "Não é possível enviar mensagem para si mesmo")
+    await ensure_accepted_connection(user.id, data.recipient_id, db)
+
+    if data.reply_to_id:
+        original = await db.get(Message, data.reply_to_id)
+        if not original or {original.sender_id, original.recipient_id} != {user.id, data.recipient_id}:
+            raise HTTPException(400, "A mensagem respondida não pertence a esta conversa")
+
+    attachments = []
+    if data.attachment_ids:
+        attachments = (await db.scalars(select(Attachment).where(
+            Attachment.id.in_(data.attachment_ids), Attachment.owner_id == user.id,
+        ))).all()
+        if len(attachments) != len(set(data.attachment_ids)):
+            raise HTTPException(400, "Alguns arquivos não pertencem ao usuário atual")
+
+    recipient = await db.get(User, data.recipient_id)
+    message = Message(
+        sender_id=user.id,
+        recipient_id=data.recipient_id,
+        content=content,
+        reply_to_id=data.reply_to_id,
+    )
+    message.attachment_id_list = [attachment.id for attachment in attachments]
+    db.add(message)
+    await db.commit()
+    await db.refresh(message)
+    payload = message_view(message, {user.id: user.name, recipient.id: recipient.name})
+    await manager.send_to_user(user.id, {"type": "message.created", "message": payload})
+    await manager.send_to_user(recipient.id, {"type": "message.created", "message": payload})
+    return payload
+
+
+@router.post("/messages/{message_id}/reaction")
+async def react_to_message(message_id: str, data: MessageReaction, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+    message = await db.get(Message, message_id)
+    if not message or user.id not in {message.sender_id, message.recipient_id}:
+        raise HTTPException(404, "Mensagem não encontrada")
+    await ensure_accepted_connection(user.id, message.sender_id if message.recipient_id == user.id else message.recipient_id, db)
+
+    if data.reaction is not None and data.reaction not in VALID_REACTIONS:
+        raise HTTPException(422, "Reação inválida")
+    reactions = message.reaction_map
+    if data.reaction is None:
+        reactions.pop(user.id, None)
+    else:
+        reactions[user.id] = data.reaction
+    message.reaction_map = reactions
+    await db.commit()
+    payload = {"message_id": message.id, "reactions": message.reaction_map}
+    await manager.send_to_user(message.sender_id, {"type": "message.reaction", **payload})
+    await manager.send_to_user(message.recipient_id, {"type": "message.reaction", **payload})
+    return payload
 
 
 @router.get("/moments")

@@ -126,3 +126,58 @@ def test_list_shared_moments_inbox_for_recipient(client_override, db_session):
     assert len(payload) == 1
     assert payload[0]["content"] == "Mensagem privada para o usuário B."
     assert payload[0]["owner_id"] == "user-a"
+
+
+def test_private_messages_support_replies_and_reactions(client_override):
+    first_response = client_override.post(
+        "/social/messages",
+        json={"recipient_id": "user-b", "content": "Como foi seu dia?"},
+    )
+
+    assert first_response.status_code == 201, first_response.text
+    first_message = first_response.json()
+    assert first_message["sender_id"] == "user-a"
+    assert first_message["recipient_id"] == "user-b"
+
+    reply_response = client_override.post(
+        "/social/messages",
+        json={
+            "recipient_id": "user-b",
+            "content": "Foi bom, obrigado por perguntar.",
+            "reply_to_id": first_message["id"],
+        },
+    )
+    assert reply_response.status_code == 201, reply_response.text
+    assert reply_response.json()["reply_to_id"] == first_message["id"]
+
+    reaction_response = client_override.post(
+        f"/social/messages/{first_message['id']}/reaction",
+        json={"reaction": "heart"},
+    )
+    assert reaction_response.status_code == 200, reaction_response.text
+    assert reaction_response.json()["reactions"] == {"user-a": "heart"}
+
+    conversation_response = client_override.get("/social/messages/user-b")
+    assert conversation_response.status_code == 200, conversation_response.text
+    assert len(conversation_response.json()) == 2
+
+
+def test_received_message_inbox_lists_messages_for_recipient(client_override, db_session):
+    response = client_override.post(
+        "/social/messages",
+        json={"recipient_id": "user-b", "content": "Mensagem recebida."},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["recipient_id"] == "user-b"
+
+    async def override_current_user_b():
+        return await db_session.get(User, "user-b")
+
+    app.dependency_overrides[current_user] = override_current_user_b
+    inbox_response = client_override.get("/social/messages/inbox")
+
+    assert inbox_response.status_code == 200, inbox_response.text
+    payload = inbox_response.json()
+    assert len(payload) == 1
+    assert payload[0]["content"] == "Mensagem recebida."
+    assert payload[0]["sender_id"] == "user-a"

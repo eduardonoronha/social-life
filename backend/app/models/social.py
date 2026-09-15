@@ -20,6 +20,63 @@ class Connection(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
 
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    sender_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    recipient_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    reply_to_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("messages.id"), nullable=True)
+    attachment_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reactions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    @property
+    def reaction_map(self) -> dict[str, str]:
+        if not self.reactions:
+            return {}
+        try:
+            payload = json.loads(self.reactions)
+        except (TypeError, ValueError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @reaction_map.setter
+    def reaction_map(self, values: dict[str, str]) -> None:
+        self.reactions = json.dumps(values, ensure_ascii=False)
+
+    @property
+    def attachment_id_list(self) -> list[str]:
+        if not self.attachment_ids:
+            return []
+        try:
+            payload = json.loads(self.attachment_ids)
+        except (TypeError, ValueError):
+            return []
+        return [str(item) for item in payload] if isinstance(payload, list) else []
+
+    @attachment_id_list.setter
+    def attachment_id_list(self, values: list[str]) -> None:
+        self.attachment_ids = json.dumps(list(dict.fromkeys(values)), ensure_ascii=False)
+
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    object_key: Mapped[str] = mapped_column(String(500), unique=True)
+    original_name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(150))
+    size_bytes: Mapped[int] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
 class Moment(Base):
     __tablename__ = "moments"
 

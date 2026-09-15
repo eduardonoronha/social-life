@@ -52,6 +52,17 @@ class ConnectionCategoryUpdate(BaseModel):
     category: str | None = Field(default=None, max_length=30)
 
 
+class MessageCreate(BaseModel):
+    recipient_id: str
+    content: str = Field(min_length=1, max_length=10000)
+    reply_to_id: str | None = None
+    attachment_ids: list[str] = Field(default_factory=list, max_length=10)
+
+
+class MessageReaction(BaseModel):
+    reaction: str | None = Field(default=None, max_length=16)
+
+
 class MomentCreate(BaseModel):
     content: str = Field(min_length=1, max_length=10000)
     audience: MomentAudience = "person"
