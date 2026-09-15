@@ -37,6 +37,18 @@ type Relationship = {
   category: string | null;
 };
 
+type SharedMoment = {
+  id: string;
+  owner_id: string;
+  owner_name: string | null;
+  content: string;
+  audience: string;
+  shared_with_id: string | null;
+  shared_with_ids: string[];
+  group_id: string | null;
+  created_at: string;
+};
+
 type Profile = {
   id: string;
   name: string;
@@ -45,6 +57,8 @@ type Profile = {
   interests: string[];
   profile_visible: boolean;
 };
+
+type ShareAudience = "person" | "people" | "group" | "connections";
 
 function fmt(s: number) {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
@@ -69,7 +83,12 @@ export default function Home() {
   const [people, setPeople] = useState<Person[]>([]);
   const [connections, setConnections] = useState<Relationship[]>([]);
   const [requests, setRequests] = useState<Relationship[]>([]);
+  const [sharedMoments, setSharedMoments] = useState<SharedMoment[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [shareContent, setShareContent] = useState("");
+  const [shareAudience, setShareAudience] = useState<ShareAudience>("person");
+  const [shareRecipients, setShareRecipients] = useState<string[]>([]);
+  const [shareGroupId, setShareGroupId] = useState("");
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const api = useCallback(async (path: string, init: RequestInit = {}) => {
@@ -160,6 +179,12 @@ export default function Home() {
     ]);
     if (connectionsResponse.ok) setConnections(await connectionsResponse.json());
     if (requestsResponse.ok) setRequests(await requestsResponse.json());
+  }, [api, token]);
+
+  const loadIncomingMoments = useCallback(async () => {
+    if (!token) return;
+    const response = await api("/social/moments/inbox");
+    if (response.ok) setSharedMoments(await response.json());
   }, [api, token]);
 
   const loadProfile = useCallback(async () => {
@@ -265,21 +290,87 @@ export default function Home() {
     await loadEntries();
   }
 
+  async function shareMoment() {
+    const value = shareContent.trim();
+    if (!value) {
+      setMessage("Escreva algo para compartilhar.");
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      content: value,
+      audience: shareAudience,
+    };
+
+    if (shareAudience === "person") {
+      if (shareRecipients.length !== 1) {
+        setMessage("Selecione uma pessoa para compartilhar com uma pessoa.");
+        return;
+      }
+      payload.shared_with_id = shareRecipients[0];
+    }
+
+    if (shareAudience === "people") {
+      if (shareRecipients.length === 0) {
+        setMessage("Selecione pelo menos uma pessoa para compartilhar.");
+        return;
+      }
+      payload.shared_with_ids = shareRecipients;
+    }
+
+    if (shareAudience === "connections") {
+      payload.shared_with_ids = shareRecipients;
+    }
+
+    if (shareAudience === "group") {
+      if (!shareGroupId.trim()) {
+        setMessage("Informe um identificador de grupo para este compartilhamento.");
+        return;
+      }
+      payload.group_id = shareGroupId.trim();
+    }
+
+    const response = await api("/social/moments", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setMessage(errorMessage(data.detail, "Não foi possível compartilhar."));
+      return;
+    }
+
+    setShareContent("");
+    setShareRecipients([]);
+    setShareGroupId("");
+    setShareAudience("person");
+    setMessage("Compartilhamento enviado.");
+  }
+
   useEffect(() => {
     if (!token) return;
 
     start();
     loadEntries();
     loadSocial();
+    loadIncomingMoments();
     loadProfile();
 
+    const refreshInterval = window.setInterval(() => {
+      loadSocial();
+      loadIncomingMoments();
+    }, 5000);
+
     return () => {
+      window.clearInterval(refreshInterval);
       if (heartbeat.current) {
         clearInterval(heartbeat.current);
         heartbeat.current = null;
       }
     };
-  }, [token, start, loadEntries, loadSocial, loadProfile]);
+  }, [token, start, loadEntries, loadSocial, loadIncomingMoments, loadProfile]);
 
   useEffect(() => {
     if (!token) return;
@@ -376,6 +467,88 @@ export default function Home() {
         {message && <p>{message}</p>}
       </section>
 
+      <section style={card}>
+        <h2>Compartilhar</h2>
+        <p>Sem posts públicos. Escolha explicitamente com quem compartilhar.</p>
+
+        <label style={fieldLabel}>
+          Público
+          <select
+            value={shareAudience}
+            onChange={(e) => {
+              const next = e.target.value as ShareAudience;
+              setShareAudience(next);
+              if (next === "person") setShareRecipients([]);
+              if (next !== "people" && next !== "connections") setShareRecipients([]);
+            }}
+            style={select}
+          >
+            <option value="person">Uma pessoa</option>
+            <option value="people">Várias pessoas</option>
+            <option value="connections">Minha lista privada de conexões</option>
+            <option value="group">Um grupo</option>
+          </select>
+        </label>
+
+        {shareAudience === "group" ? (
+          <label style={fieldLabel}>
+            ID do grupo
+            <input
+              value={shareGroupId}
+              onChange={(e) => setShareGroupId(e.target.value)}
+              placeholder="Grupo opcional"
+              style={input}
+            />
+          </label>
+        ) : (
+          <div style={shareList}>
+            {connections.length === 0 && (
+              <p>Você precisa aceitar conexões para compartilhar com outras pessoas.</p>
+            )}
+            {connections.map((connection) => {
+              const selected = shareAudience === "person"
+                ? shareRecipients.includes(connection.person.id)
+                : shareRecipients.includes(connection.person.id);
+
+              return (
+                <label key={connection.id} style={checkLabelRow}>
+                  <input
+                    type={shareAudience === "person" ? "radio" : "checkbox"}
+                    checked={selected}
+                    onChange={() => {
+                      if (shareAudience === "person") {
+                        setShareRecipients([connection.person.id]);
+                        return;
+                      }
+
+                      setShareRecipients((current) =>
+                        current.includes(connection.person.id)
+                          ? current.filter((id) => id !== connection.person.id)
+                          : [...current, connection.person.id]
+                      );
+                    }}
+                  />
+                  <span>{connection.person.name}</span>
+                </label>
+              );
+            })}
+          </div>
+        )}
+
+        <textarea
+          rows={4}
+          disabled={!active}
+          value={shareContent}
+          onChange={(e) => setShareContent(e.target.value)}
+          placeholder="O que você quer compartilhar com o público escolhido?"
+          style={textarea}
+        />
+
+        <button disabled={!active} onClick={shareMoment} style={button}>
+          Enviar compartilhamento
+        </button>
+      </section>
+
       <section>
         <h2>Minha vida</h2>
 
@@ -385,6 +558,17 @@ export default function Home() {
               {new Date(entry.created_at).toLocaleString("pt-BR")}
             </small>
             <p>{entry.content}</p>
+          </article>
+        ))}
+      </section>
+
+      <section style={card}>
+        <h2>Compartilhados comigo</h2>
+        {sharedMoments.length === 0 && <p>Nenhum momento compartilhado com você.</p>}
+        {sharedMoments.map((moment) => (
+          <article key={moment.id} style={personCard}>
+            <small>{moment.owner_name ?? "Pessoa"} · {new Date(moment.created_at).toLocaleString("pt-BR")}</small>
+            <p>{moment.content}</p>
           </article>
         ))}
       </section>
@@ -540,6 +724,35 @@ const authInput = {
 const checkLabel = {
   display: "block",
   marginBottom: 12,
+};
+
+const fieldLabel = {
+  display: "block",
+  marginBottom: 12,
+  fontWeight: 600,
+};
+
+const select = {
+  display: "block",
+  width: "100%",
+  boxSizing: "border-box" as const,
+  padding: 10,
+  marginTop: 8,
+  border: "1px solid #ccc",
+  borderRadius: 8,
+};
+
+const shareList = {
+  display: "grid",
+  gap: 8,
+  margin: "12px 0",
+};
+
+const checkLabelRow = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "6px 0",
 };
 
 const personCard = {

@@ -6,12 +6,13 @@ from app.db import get_db
 from app.deps import current_user
 from app.models.social import Connection, Moment
 from app.models.user import User
-from app.schemas import ConnectionCategoryUpdate, ConnectionCreate, MomentCreate
+from app.schemas import ConnectionCategoryUpdate, ConnectionCreate, MomentCreate, MomentResponse
 from app.services.usage import require_active
 
 router = APIRouter(prefix="/social", tags=["social"])
 
 CATEGORIES = {"family", "friend", "close_friend", "colleague", "acquaintance", "other"}
+VALID_AUDIENCES = {"person", "people", "group", "connections"}
 
 
 async def require_active_session(db: AsyncSession, user: User) -> None:
@@ -52,6 +53,89 @@ async def find_connection(connection_id: str, user: User, db: AsyncSession) -> C
     if not connection:
         raise HTTPException(404, "Relação não encontrada")
     return connection
+
+
+async def accepted_connection_ids_for(user: User, db: AsyncSession, target_ids: list[str] | None = None) -> list[str]:
+    query = select(Connection).where(
+        Connection.status == "accepted",
+        or_(
+            Connection.requester_id == user.id,
+            Connection.addressee_id == user.id,
+        ),
+    )
+    connections = (await db.scalars(query)).all()
+    ids = []
+    for connection in connections:
+        other_id = connection.addressee_id if connection.requester_id == user.id else connection.requester_id
+        ids.append(other_id)
+    if target_ids is None:
+        return ids
+    invalid = [target_id for target_id in target_ids if target_id not in set(ids)]
+    return invalid
+
+
+async def validate_moment_targets(data: MomentCreate, user: User, db: AsyncSession) -> tuple[str, str | None, list[str], str | None]:
+    if data.audience not in VALID_AUDIENCES:
+        raise HTTPException(422, "Público inválido")
+
+    if data.audience == "group":
+        if not data.group_id:
+            raise HTTPException(400, "Grupo deve ser informado quando o público for 'group'.")
+        return data.audience, data.group_id, [], data.group_id
+
+    recipients = []
+    if data.shared_with_id:
+        recipients = [data.shared_with_id]
+    elif data.shared_with_ids:
+        recipients = list(dict.fromkeys(data.shared_with_ids))
+
+    if data.audience == "person":
+        if len(recipients) != 1:
+            raise HTTPException(400, "Público 'person' exige exatamente um destinatário.")
+        if recipients[0] == user.id:
+            raise HTTPException(400, "Não é possível compartilhar consigo mesmo.")
+        connection = await db.scalar(select(Connection).where(
+            Connection.status == "accepted",
+            or_(
+                and_(Connection.requester_id == user.id, Connection.addressee_id == recipients[0]),
+                and_(Connection.requester_id == recipients[0], Connection.addressee_id == user.id),
+            ),
+        ))
+        if not connection:
+            raise HTTPException(403, "Momento só pode ser compartilhado com uma conexão aceita")
+        return data.audience, None, recipients, None
+
+    if data.audience == "people":
+        if not recipients:
+            raise HTTPException(400, "Público 'people' exige pelo menos um destinatário.")
+        invalid = []
+        for recipient_id in recipients:
+            if recipient_id == user.id:
+                invalid.append(recipient_id)
+                continue
+            connection = await db.scalar(select(Connection).where(
+                Connection.status == "accepted",
+                or_(
+                    and_(Connection.requester_id == user.id, Connection.addressee_id == recipient_id),
+                    and_(Connection.requester_id == recipient_id, Connection.addressee_id == user.id),
+                ),
+            ))
+            if not connection:
+                invalid.append(recipient_id)
+        if invalid:
+            raise HTTPException(403, "Alguns destinatários não são conexões aceitas")
+        return data.audience, None, recipients, None
+
+    if data.audience == "connections":
+        accepted_ids = await accepted_connection_ids_for(user, db)
+        if recipients:
+            invalid = [recipient_id for recipient_id in recipients if recipient_id not in set(accepted_ids)]
+            if invalid:
+                raise HTTPException(403, "Alguns destinatários não são conexões aceitas")
+            return data.audience, None, recipients, None
+        return data.audience, None, accepted_ids, None
+
+    raise HTTPException(422, "Público inválido")
 
 
 @router.get("/people")
@@ -185,21 +269,76 @@ async def set_connection_category(connection_id: str, data: ConnectionCategoryUp
     return {"category": data.category}
 
 
+@router.get("/moments")
+async def list_moments(user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+    moments = await db.scalars(select(Moment).where(Moment.owner_id == user.id).order_by(Moment.created_at.desc()))
+    result = []
+    for moment in moments:
+        result.append({
+            "id": moment.id,
+            "owner_id": moment.owner_id,
+            "content": moment.content,
+            "audience": moment.audience,
+            "shared_with_id": moment.shared_with_id,
+            "shared_with_ids": moment.recipient_ids,
+            "group_id": moment.group_id,
+            "created_at": moment.created_at,
+        })
+    return result
+
+
+@router.get("/moments/inbox")
+async def list_incoming_moments(user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    await require_active_session(db, user)
+
+    moments = await db.scalars(select(Moment).where(
+        Moment.owner_id != user.id,
+        or_(
+            Moment.shared_with_id == user.id,
+            Moment.shared_with_ids.like(f'%"{user.id}"%'),
+        ),
+    ).order_by(Moment.created_at.desc()))
+
+    result = []
+    for moment in moments:
+        owner = await db.get(User, moment.owner_id)
+        result.append({
+            "id": moment.id,
+            "owner_id": moment.owner_id,
+            "owner_name": owner.name if owner else None,
+            "content": moment.content,
+            "audience": moment.audience,
+            "shared_with_id": moment.shared_with_id,
+            "shared_with_ids": moment.recipient_ids,
+            "group_id": moment.group_id,
+            "created_at": moment.created_at,
+        })
+    return result
+
+
 @router.post("/moments")
 async def create_moment(data: MomentCreate, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
     await require_active_session(db, user)
-    if data.shared_with_id:
-        connection = await db.scalar(select(Connection).where(
-            Connection.status == "accepted",
-            or_(
-                and_(Connection.requester_id == user.id, Connection.addressee_id == data.shared_with_id),
-                and_(Connection.requester_id == data.shared_with_id, Connection.addressee_id == user.id),
-            ),
-        ))
-        if not connection:
-            raise HTTPException(403, "Momento só pode ser compartilhado com uma conexão aceita")
-    moment = Moment(owner_id=user.id, content=data.content, shared_with_id=data.shared_with_id)
+    audience, group_id, recipient_ids, _ = await validate_moment_targets(data, user, db)
+    moment = Moment(
+        owner_id=user.id,
+        content=data.content,
+        audience=audience,
+        shared_with_id=recipient_ids[0] if audience == "person" and recipient_ids else None,
+        group_id=group_id,
+    )
+    moment.recipient_ids = recipient_ids if audience in {"people", "connections"} else []
     db.add(moment)
     await db.commit()
     await db.refresh(moment)
-    return moment
+    return {
+        "id": moment.id,
+        "owner_id": moment.owner_id,
+        "content": moment.content,
+        "audience": moment.audience,
+        "shared_with_id": moment.shared_with_id,
+        "shared_with_ids": moment.recipient_ids,
+        "group_id": moment.group_id,
+        "created_at": moment.created_at,
+    }

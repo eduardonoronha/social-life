@@ -27,6 +27,14 @@ def period_end(start: datetime, days: int) -> datetime:
     return start + timedelta(days=days)
 
 
+def normalize_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 async def get_active(db: AsyncSession, user_id: str) -> UsageSession | None:
     return await db.scalar(
         select(UsageSession)
@@ -76,12 +84,13 @@ async def finalize(
         return
 
     if session.hard_stop_at is not None:
-        end = min(end, session.hard_stop_at)
+        end = min(normalize_utc(end), normalize_utc(session.hard_stop_at))
 
-    end = max(end, session.started_at)
+    started_at = normalize_utc(session.started_at)
+    end = max(normalize_utc(end), started_at)
     session.ended_at = end
     session.duration_seconds = max(
-        0, int((end - session.started_at).total_seconds())
+        0, int((end - started_at).total_seconds())
     )
     await db.commit()
 
@@ -118,8 +127,8 @@ async def reconcile(
         )
         await db.commit()
 
-    if moment >= session.hard_stop_at:
-        await finalize(db, session, session.hard_stop_at)
+    if normalize_utc(moment) >= normalize_utc(session.hard_stop_at):
+        await finalize(db, session, normalize_utc(session.hard_stop_at))
         return True
 
     return False
