@@ -67,6 +67,13 @@ async def init_db():
             "messages": [
                 ("attachment_ids", "attachment_ids TEXT"),
             ],
+            "journal_entries": [
+                ("title", "title VARCHAR(200)"),
+                ("date", "date DATE"),
+                ("duration_minutes", "duration_minutes INTEGER"),
+                ("intensity", "intensity VARCHAR(40)"),
+                ("location", "location VARCHAR(200)"),
+            ],
             "usage_sessions": [
                 ("hard_stop_at", "hard_stop_at TIMESTAMPTZ"),
             ],

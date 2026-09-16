@@ -17,3 +17,4 @@ Provides-Extra: dev
 Requires-Dist: pytest<9,>=8.4; extra == "dev"
 Requires-Dist: pytest-asyncio<2,>=1.1; extra == "dev"
 Requires-Dist: httpx<1,>=0.28; extra == "dev"
+Requires-Dist: aiosqlite<1,>=0.20; extra == "dev"

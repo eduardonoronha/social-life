@@ -17,8 +17,13 @@ type Usage = {
 
 type Entry = {
   id: string;
-  content: string;
   entry_type: string;
+  title: string | null;
+  content: string;
+  date: string | null;
+  duration_minutes: number | null;
+  intensity: string | null;
+  location: string | null;
   created_at: string;
 };
 
@@ -90,7 +95,16 @@ export default function Home() {
   const [authMessage, setAuthMessage] = useState("");
   const [usage, setUsage] = useState<Usage | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [entryFilter, setEntryFilter] = useState("all");
+  const [entryType, setEntryType] = useState("note");
+  const [entryTitle, setEntryTitle] = useState("");
+  const [entryDate, setEntryDate] = useState("");
+  const [entryDurationMinutes, setEntryDurationMinutes] = useState("");
+  const [entryIntensity, setEntryIntensity] = useState("");
+  const [entryLocation, setEntryLocation] = useState("");
   const [content, setContent] = useState("");
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [retrospective, setRetrospective] = useState<{ days: number; total_entries: number; by_type: Record<string, number>; entries: Entry[] } | null>(null);
   const [message, setMessage] = useState("");
   const [peopleQuery, setPeopleQuery] = useState("");
   const [people, setPeople] = useState<Person[]>([]);
@@ -182,12 +196,21 @@ export default function Home() {
     return true;
   }, [api, refreshUsage, token]);
 
-  const loadEntries = useCallback(async () => {
+  const loadEntries = useCallback(async (selectedType: string = entryFilter) => {
     if (!token) return;
 
-    const response = await api("/life/entries");
+    const response = await api(selectedType === "all" ? "/life/entries" : `/life/entries?entry_type=${encodeURIComponent(selectedType)}`);
     if (response.ok) {
       setEntries(await response.json());
+    }
+  }, [api, entryFilter, token]);
+
+  const loadRetrospective = useCallback(async () => {
+    if (!token) return;
+
+    const response = await api("/life/retrospective?days=30");
+    if (response.ok) {
+      setRetrospective(await response.json());
     }
   }, [api, token]);
 
@@ -300,26 +323,72 @@ export default function Home() {
 
   async function addEntry() {
     const value = content.trim();
-    if (!value) return;
+    const title = entryTitle.trim();
+    if (!value && !title) {
+      setMessage("Escreva algo ou dê um título ao registro.");
+      return;
+    }
 
-    const response = await api("/life/entries", {
-      method: "POST",
-      body: JSON.stringify({
-        content: value,
-        entry_type: "note",
-      }),
-    });
+    const payload = {
+      entry_type: entryType,
+      title: title || null,
+      content: value || null,
+      date: entryDate || null,
+      duration_minutes: entryDurationMinutes ? Number(entryDurationMinutes) : null,
+      intensity: entryIntensity || null,
+      location: entryLocation || null,
+    };
+
+    const response = await api(
+      editingEntryId ? `/life/entries/${editingEntryId}` : "/life/entries",
+      {
+        method: editingEntryId ? "PUT" : "POST",
+        body: JSON.stringify(payload),
+      }
+    );
 
     const data = await response.json();
 
     if (!response.ok) {
-      setMessage(errorMessage(data.detail, "Não foi possível registrar."));
+      setMessage(errorMessage(data.detail, "Não foi possível salvar o registro."));
       return;
     }
 
+    setEntryType("note");
+    setEntryTitle("");
+    setEntryDate("");
+    setEntryDurationMinutes("");
+    setEntryIntensity("");
+    setEntryLocation("");
     setContent("");
-    setMessage("Registro salvo.");
-    await loadEntries();
+    setEditingEntryId(null);
+    setMessage(editingEntryId ? "Registro atualizado." : "Registro salvo.");
+    await loadEntries(entryFilter);
+    await loadRetrospective();
+  }
+
+  function startEditingEntry(entry: Entry) {
+    setEditingEntryId(entry.id);
+    setEntryType(entry.entry_type || "note");
+    setEntryTitle(entry.title ?? "");
+    setEntryDate(entry.date ?? "");
+    setEntryDurationMinutes(entry.duration_minutes ? String(entry.duration_minutes) : "");
+    setEntryIntensity(entry.intensity ?? "");
+    setEntryLocation(entry.location ?? "");
+    setContent(entry.content ?? "");
+    setMessage("Editando registro.");
+  }
+
+  function cancelEditingEntry() {
+    setEditingEntryId(null);
+    setEntryType("note");
+    setEntryTitle("");
+    setEntryDate("");
+    setEntryDurationMinutes("");
+    setEntryIntensity("");
+    setEntryLocation("");
+    setContent("");
+    setMessage("");
   }
 
   async function shareMoment() {
@@ -457,7 +526,8 @@ export default function Home() {
     if (!token) return;
 
     start();
-    loadEntries();
+    loadEntries(entryFilter);
+    loadRetrospective();
     loadSocial();
     loadIncomingMoments();
     loadReceivedMessages();
@@ -476,7 +546,7 @@ export default function Home() {
         heartbeat.current = null;
       }
     };
-  }, [token, start, loadEntries, loadSocial, loadIncomingMoments, loadReceivedMessages, loadProfile]);
+  }, [token, start, entryFilter, loadEntries, loadRetrospective, loadSocial, loadIncomingMoments, loadReceivedMessages, loadProfile]);
 
   useEffect(() => {
     if (!activeConversationId) {
@@ -598,20 +668,86 @@ export default function Home() {
       </section>
 
       <section style={card}>
-        <h2>Novo registro</h2>
+        <h2>{editingEntryId ? "Editar registro" : "Novo registro"}</h2>
+
+        <label style={fieldLabel}>
+          Tipo
+          <select value={entryType} onChange={(e) => setEntryType(e.target.value)} style={select}>
+            <option value="note">Livre</option>
+            <option value="activity">Atividade</option>
+            <option value="exercise">Exercício</option>
+            <option value="study">Estudo</option>
+            <option value="reading">Leitura</option>
+            <option value="work">Trabalho</option>
+            <option value="project">Projeto</option>
+            <option value="meeting">Encontro</option>
+            <option value="travel">Viagem</option>
+            <option value="important_event">Acontecimento importante</option>
+            <option value="habit">Hábito</option>
+            <option value="goal_achieved">Meta atingida</option>
+            <option value="goal_missed">Meta não atingida</option>
+            <option value="learning">Aprendizado</option>
+          </select>
+        </label>
+
+        <input
+          value={entryTitle}
+          onChange={(e) => setEntryTitle(e.target.value)}
+          placeholder="Título do registro"
+          style={input}
+        />
+
+        <div style={row}>
+          <input
+            type="date"
+            value={entryDate}
+            onChange={(e) => setEntryDate(e.target.value)}
+            style={{ ...input, flex: 1 }}
+          />
+          <input
+            type="number"
+            min={1}
+            value={entryDurationMinutes}
+            onChange={(e) => setEntryDurationMinutes(e.target.value)}
+            placeholder="Duração (min)"
+            style={{ ...input, flex: 1 }}
+          />
+        </div>
+
+        <div style={row}>
+          <input
+            value={entryIntensity}
+            onChange={(e) => setEntryIntensity(e.target.value)}
+            placeholder="Intensidade"
+            style={{ ...input, flex: 1 }}
+          />
+          <input
+            value={entryLocation}
+            onChange={(e) => setEntryLocation(e.target.value)}
+            placeholder="Local"
+            style={{ ...input, flex: 1 }}
+          />
+        </div>
 
         <textarea
           rows={5}
           disabled={!active}
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder="O que vale a pena guardar?"
+          placeholder="Descreva o que aconteceu, o que aprendeu ou o que precisa registrar."
           style={textarea}
         />
 
-        <button disabled={!active} onClick={addEntry} style={button}>
-          Registrar
-        </button>
+        <div style={row}>
+          <button disabled={!active} onClick={addEntry} style={button}>
+            {editingEntryId ? "Salvar alterações" : "Registrar"}
+          </button>
+          {editingEntryId && (
+            <button onClick={cancelEditingEntry} style={secondary}>
+              Cancelar
+            </button>
+          )}
+        </div>
 
         {message && <p>{message}</p>}
       </section>
@@ -698,17 +834,72 @@ export default function Home() {
         </button>
       </section>
 
-      <section>
+      <section style={card}>
         <h2>Minha vida</h2>
 
+        <label style={fieldLabel}>
+          Filtro por tipo
+          <select value={entryFilter} onChange={(e) => { setEntryFilter(e.target.value); void loadEntries(e.target.value); }} style={select}>
+            <option value="all">Todos</option>
+            <option value="note">Livre</option>
+            <option value="activity">Atividade</option>
+            <option value="exercise">Exercício</option>
+            <option value="study">Estudo</option>
+            <option value="reading">Leitura</option>
+            <option value="work">Trabalho</option>
+            <option value="project">Projeto</option>
+            <option value="meeting">Encontro</option>
+            <option value="travel">Viagem</option>
+            <option value="important_event">Acontecimento importante</option>
+            <option value="habit">Hábito</option>
+            <option value="goal_achieved">Meta atingida</option>
+            <option value="goal_missed">Meta não atingida</option>
+            <option value="learning">Aprendizado</option>
+          </select>
+        </label>
+
+        {entries.length === 0 && <p>Nenhum registro encontrado para este filtro.</p>}
         {entries.map((entry) => (
           <article key={entry.id} style={card}>
             <small>
-              {new Date(entry.created_at).toLocaleString("pt-BR")}
+              {entry.date ? new Date(`${entry.date}T12:00:00`).toLocaleDateString("pt-BR") : new Date(entry.created_at).toLocaleDateString("pt-BR")}
+              {entry.duration_minutes ? ` · ${entry.duration_minutes} min` : ""}
+              {entry.location ? ` · ${entry.location}` : ""}
             </small>
-            <p>{entry.content}</p>
+            <p><strong>{entry.title || "Registro"}</strong></p>
+            <p><small>{entry.entry_type}</small></p>
+            {entry.intensity && <p><small>Intensidade: {entry.intensity}</small></p>}
+            <p>{entry.content || "Sem descrição adicional."}</p>
+            <div style={row}>
+              <button onClick={() => startEditingEntry(entry)} style={secondary}>Editar</button>
+            </div>
           </article>
         ))}
+      </section>
+
+      <section style={card}>
+        <h2>Retrospectiva dos últimos 30 dias</h2>
+        {retrospective ? (
+          <>
+            <p>Total de registros: <strong>{retrospective.total_entries}</strong></p>
+            <div style={row}>
+              {Object.entries(retrospective.by_type).map(([type, count]) => (
+                <span key={type} style={{ ...secondary, display: "inline-block", padding: "0.5rem 0.75rem", marginRight: 8 }}>
+                  {type}: {count}
+                </span>
+              ))}
+            </div>
+            {retrospective.entries.length === 0 && <p>Nenhum registro recente.</p>}
+            {retrospective.entries.slice(0, 5).map((entry) => (
+              <article key={entry.id} style={personCard}>
+                <small>{entry.entry_type} · {entry.title || "Registro"}</small>
+                <p>{entry.content || "Sem descrição adicional."}</p>
+              </article>
+            ))}
+          </>
+        ) : (
+          <p>Carregando retrospectiva...</p>
+        )}
       </section>
 
       <section style={card}>

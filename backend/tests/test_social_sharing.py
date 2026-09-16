@@ -181,3 +181,78 @@ def test_received_message_inbox_lists_messages_for_recipient(client_override, db
     assert len(payload) == 1
     assert payload[0]["content"] == "Mensagem recebida."
     assert payload[0]["sender_id"] == "user-a"
+
+
+def test_create_structured_journal_entry(client_override):
+    response = client_override.post(
+        "/life/entries",
+        json={
+            "entry_type": "exercise",
+            "title": "Corrida matinal",
+            "content": "Caminhei 5km em ritmo moderado.",
+            "date": "2026-09-15",
+            "duration_minutes": 45,
+            "intensity": "moderate",
+            "location": "Parque Central",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["entry_type"] == "exercise"
+    assert payload["title"] == "Corrida matinal"
+    assert payload["duration_minutes"] == 45
+    assert payload["location"] == "Parque Central"
+    assert payload["content"] == "Caminhei 5km em ritmo moderado."
+
+
+def test_journal_supports_filtering_editing_and_retrospective(client_override):
+    first = client_override.post(
+        "/life/entries",
+        json={
+            "entry_type": "exercise",
+            "title": "Treino de força",
+            "content": "Levantamento de peso por 40 minutos.",
+            "date": "2026-09-15",
+            "duration_minutes": 40,
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    second = client_override.post(
+        "/life/entries",
+        json={
+            "entry_type": "reading",
+            "title": "Leitura focada",
+            "content": "Leitura de um capítulo do livro de estratégia.",
+            "date": "2026-09-16",
+            "duration_minutes": 30,
+        },
+    )
+    assert second.status_code == 200, second.text
+
+    filtered = client_override.get("/life/entries?entry_type=exercise")
+    assert filtered.status_code == 200, filtered.text
+    assert len(filtered.json()) == 1
+    assert filtered.json()[0]["entry_type"] == "exercise"
+
+    entry_id = filtered.json()[0]["id"]
+    update = client_override.put(
+        f"/life/entries/{entry_id}",
+        json={
+            "title": "Treino de força revisado",
+            "intensity": "high",
+            "location": "Academia",
+        },
+    )
+    assert update.status_code == 200, update.text
+    assert update.json()["title"] == "Treino de força revisado"
+    assert update.json()["intensity"] == "high"
+    assert update.json()["location"] == "Academia"
+
+    retrospective = client_override.get("/life/retrospective?days=30")
+    assert retrospective.status_code == 200, retrospective.text
+    payload = retrospective.json()
+    assert payload["total_entries"] >= 2
+    assert payload["by_type"]["exercise"] >= 1
+    assert payload["entries"][0]["entry_type"] in {"reading", "exercise"}

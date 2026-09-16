@@ -1,9 +1,25 @@
-from datetime import datetime
+from datetime import date as date_type, datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
 MomentAudience = Literal["person", "people", "group", "connections"]
+JournalEntryType = Literal[
+    "note",
+    "activity",
+    "exercise",
+    "study",
+    "reading",
+    "work",
+    "project",
+    "meeting",
+    "travel",
+    "important_event",
+    "habit",
+    "goal_achieved",
+    "goal_missed",
+    "learning",
+]
 
 
 class RegisterRequest(BaseModel):
@@ -23,15 +39,44 @@ class TokenResponse(BaseModel):
 
 
 class JournalCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=10000)
-    entry_type: str = Field(default="note", max_length=40)
+    title: str | None = Field(default=None, max_length=200)
+    content: str | None = Field(default=None, max_length=10000)
+    entry_type: JournalEntryType = "note"
+    date: date_type | None = None
+    duration_minutes: int | None = Field(default=None, ge=1, le=1440)
+    intensity: str | None = Field(default=None, max_length=40)
+    location: str | None = Field(default=None, max_length=200)
+
+
+class JournalUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    content: str | None = Field(default=None, max_length=10000)
+    entry_type: JournalEntryType | None = None
+    date: date_type | None = None
+    duration_minutes: int | None = Field(default=None, ge=1, le=1440)
+    intensity: str | None = Field(default=None, max_length=40)
+    location: str | None = Field(default=None, max_length=200)
 
 
 class JournalResponse(BaseModel):
     id: str
     entry_type: str
+    title: str | None = None
     content: str
+    date: date_type | None = None
+    duration_minutes: int | None = None
+    intensity: str | None = None
+    location: str | None = None
     created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class JournalRetrospective(BaseModel):
+    days: int
+    total_entries: int
+    by_type: dict[str, int]
+    entries: list[JournalResponse]
 
     model_config = {"from_attributes": True}
 
