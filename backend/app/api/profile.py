@@ -39,6 +39,8 @@ async def get_limits(user: User = Depends(current_user)):
 
 @router.put("/limits")
 async def update_limits(data: LimitsUpdate, user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+    if data.daily_limit_minutes > user.daily_limit_minutes or data.weekly_limit_minutes > user.weekly_limit_minutes:
+        raise HTTPException(422, "Os limites só podem ser reduzidos.")
     user.daily_limit_minutes = data.daily_limit_minutes
     user.weekly_limit_minutes = data.weekly_limit_minutes
     await db.commit()

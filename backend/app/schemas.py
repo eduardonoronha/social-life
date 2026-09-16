@@ -38,6 +38,18 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class JournalStructuredData(BaseModel):
+    type: str | None = Field(default=None, max_length=40)
+    subtype: str | None = Field(default=None, max_length=80)
+    intensity: str | None = Field(default=None, max_length=40)
+    tags: list[str] = Field(default_factory=list, max_length=30)
+    mood: str | None = Field(default=None, max_length=40)
+    energy: str | None = Field(default=None, max_length=40)
+    people: list[str] = Field(default_factory=list, max_length=30)
+    context: str | None = Field(default=None, max_length=500)
+    extras: dict[str, str] = Field(default_factory=dict, max_length=20)
+
+
 class JournalCreate(BaseModel):
     title: str | None = Field(default=None, max_length=200)
     content: str | None = Field(default=None, max_length=10000)
@@ -46,6 +58,7 @@ class JournalCreate(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=1, le=1440)
     intensity: str | None = Field(default=None, max_length=40)
     location: str | None = Field(default=None, max_length=200)
+    structured_data: JournalStructuredData = Field(default_factory=JournalStructuredData)
 
 
 class JournalUpdate(BaseModel):
@@ -56,6 +69,7 @@ class JournalUpdate(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=1, le=1440)
     intensity: str | None = Field(default=None, max_length=40)
     location: str | None = Field(default=None, max_length=200)
+    structured_data: JournalStructuredData | None = None
 
 
 class JournalResponse(BaseModel):
@@ -67,6 +81,7 @@ class JournalResponse(BaseModel):
     duration_minutes: int | None = None
     intensity: str | None = None
     location: str | None = None
+    structured_data: dict = Field(default_factory=dict)
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -152,3 +167,62 @@ class LimitsUpdate(BaseModel):
 
 class AIPermissionUpdate(BaseModel):
     enabled: bool
+
+
+class GoalCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10000)
+    reason: str | None = Field(default=None, max_length=5000)
+    due_date: date_type | None = None
+    metric: str | None = Field(default=None, max_length=120)
+    progress: int = Field(default=0, ge=0, le=100)
+    status: Literal["active", "completed", "paused", "cancelled"] = "active"
+    notes: str | None = Field(default=None, max_length=10000)
+
+
+class GoalUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10000)
+    reason: str | None = Field(default=None, max_length=5000)
+    due_date: date_type | None = None
+    metric: str | None = Field(default=None, max_length=120)
+    progress: int | None = Field(default=None, ge=0, le=100)
+    status: Literal["active", "completed", "paused", "cancelled"] | None = None
+    notes: str | None = Field(default=None, max_length=10000)
+
+
+class GoalResponse(GoalCreate):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class HabitCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    target_per_week: int = Field(default=1, ge=1, le=7)
+    active: bool = True
+
+
+class HabitUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=5000)
+    target_per_week: int | None = Field(default=None, ge=1, le=7)
+    active: bool | None = None
+
+
+class HabitCheckinCreate(BaseModel):
+    checked_on: date_type = Field(default_factory=date_type.today)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class HabitCheckinResponse(HabitCheckinCreate):
+    id: str
+
+
+class HabitResponse(HabitCreate):
+    id: str
+    created_at: datetime
+    checkins: list[HabitCheckinResponse] = Field(default_factory=list)
+    model_config = {"from_attributes": True}

@@ -42,6 +42,7 @@ async def init_db():
     from app.models.social import Attachment, Connection, Message, Moment
     from app.models.usage import UsageSession
     from app.models.permissions import AIPermission
+    from app.models.personal import Goal, Habit, HabitCheckin
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -73,6 +74,7 @@ async def init_db():
                 ("duration_minutes", "duration_minutes INTEGER"),
                 ("intensity", "intensity VARCHAR(40)"),
                 ("location", "location VARCHAR(200)"),
+                ("structured_data", "structured_data TEXT"),
             ],
             "usage_sessions": [
                 ("hard_stop_at", "hard_stop_at TIMESTAMPTZ"),

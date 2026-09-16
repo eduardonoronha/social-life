@@ -10,8 +10,41 @@ from app.models.life import JournalEntry
 from app.models.user import User
 from app.schemas import JournalCreate, JournalResponse, JournalRetrospective, JournalUpdate
 from app.services.usage import require_active
+from app.services.tagging import extract_tags
 
 router = APIRouter(prefix="/life", tags=["life"])
+
+
+def structured_payload(data: JournalCreate | JournalUpdate, entry_type: str, intensity: str | None, duration_minutes: int | None, location: str | None, text: str = "", title: str | None = None) -> dict:
+    payload = data.structured_data.model_dump(exclude_none=True) if data.structured_data else {}
+    payload["type"] = payload.get("type") or entry_type
+    if intensity:
+        payload["intensity"] = intensity
+    if duration_minutes is not None:
+        payload["duration_minutes"] = duration_minutes
+    if location:
+        payload["location"] = location
+    payload["tags"] = extract_tags(
+        " ".join(value for value in (title, text) if value),
+        payload.get("tags", []),
+    )
+    payload["schema_version"] = 1
+    return payload
+
+
+def journal_payload(entry: JournalEntry) -> dict:
+    return {
+        "id": entry.id,
+        "entry_type": entry.entry_type,
+        "title": entry.title,
+        "content": entry.content,
+        "date": entry.date,
+        "duration_minutes": entry.duration_minutes,
+        "intensity": entry.intensity,
+        "location": entry.location,
+        "structured_data": entry.structured_payload,
+        "created_at": entry.created_at,
+    }
 
 
 async def require_usage(user: User, db: AsyncSession):
@@ -44,10 +77,11 @@ async def create_entry(
         intensity=data.intensity,
         location=data.location,
     )
+    entry.structured_payload = structured_payload(data, data.entry_type, data.intensity, data.duration_minutes, data.location, entry.content, entry.title)
     db.add(entry)
     await db.commit()
     await db.refresh(entry)
-    return entry
+    return journal_payload(entry)
 
 
 @router.get("/entries", response_model=list[JournalResponse])
@@ -65,7 +99,7 @@ async def list_entries(
     result = await db.scalars(
         query.order_by(JournalEntry.created_at.desc()).limit(100)
     )
-    return list(result.all())
+    return [journal_payload(entry) for entry in result.all()]
 
 
 @router.put("/entries/{entry_id}", response_model=JournalResponse)
@@ -100,10 +134,34 @@ async def update_entry(
         entry.intensity = data.intensity.strip() or None
     if data.location is not None:
         entry.location = data.location.strip() or None
+    if data.structured_data is not None:
+        entry.structured_payload = structured_payload(
+            data,
+            entry.entry_type,
+            entry.intensity,
+            entry.duration_minutes,
+            entry.location,
+            entry.content,
+            entry.title,
+        )
+    else:
+        payload = entry.structured_payload
+        payload["type"] = entry.entry_type
+        payload["intensity"] = entry.intensity
+        if entry.duration_minutes is not None:
+            payload["duration_minutes"] = entry.duration_minutes
+        if entry.location:
+            payload["location"] = entry.location
+        payload["schema_version"] = 1
+        payload["tags"] = extract_tags(
+            " ".join(value for value in (entry.title, entry.content) if value),
+            payload.get("tags", []),
+        )
+        entry.structured_payload = payload
 
     await db.commit()
     await db.refresh(entry)
-    return entry
+    return journal_payload(entry)
 
 
 @router.get("/retrospective", response_model=JournalRetrospective)
@@ -130,5 +188,5 @@ async def retrospective(
         "days": days,
         "total_entries": len(entries),
         "by_type": by_type,
-        "entries": entries,
+        "entries": [journal_payload(entry) for entry in entries],
     }

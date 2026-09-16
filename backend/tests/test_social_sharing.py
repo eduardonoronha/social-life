@@ -194,6 +194,11 @@ def test_create_structured_journal_entry(client_override):
             "duration_minutes": 45,
             "intensity": "moderate",
             "location": "Parque Central",
+            "structured_data": {
+                "subtype": "corrida",
+                "tags": ["saúde", "ar livre"],
+                "mood": "animado",
+            },
         },
     )
 
@@ -204,6 +209,30 @@ def test_create_structured_journal_entry(client_override):
     assert payload["duration_minutes"] == 45
     assert payload["location"] == "Parque Central"
     assert payload["content"] == "Caminhei 5km em ritmo moderado."
+    assert payload["structured_data"]["type"] == "exercise"
+    assert payload["structured_data"]["subtype"] == "corrida"
+    assert payload["structured_data"]["intensity"] == "moderate"
+    assert payload["structured_data"]["tags"][:2] == ["saúde", "ar livre"]
+    assert "corrida" in payload["structured_data"]["tags"]
+    assert payload["structured_data"]["mood"] == "animado"
+
+
+def test_free_text_automatically_generates_searchable_tags(client_override):
+    response = client_override.post(
+        "/life/entries",
+        json={
+            "entry_type": "note",
+            "title": "Manhã produtiva",
+            "content": "Hoje fiz uma corrida no parque com um amigo e depois estudei espanhol.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    tags = response.json()["structured_data"]["tags"]
+    assert "corrida" in tags
+    assert "amizade" in tags
+    assert "estudo" in tags
+    assert "espanhol" in tags
 
 
 def test_journal_supports_filtering_editing_and_retrospective(client_override):
@@ -256,3 +285,41 @@ def test_journal_supports_filtering_editing_and_retrospective(client_override):
     assert payload["total_entries"] >= 2
     assert payload["by_type"]["exercise"] >= 1
     assert payload["entries"][0]["entry_type"] in {"reading", "exercise"}
+
+
+def test_goals_and_habits_are_private_and_track_progress(client_override):
+    goal_response = client_override.post(
+        "/personal/goals",
+        json={
+            "title": "Aprender espanhol",
+            "description": "Estudar com regularidade.",
+            "progress": 20,
+        },
+    )
+    assert goal_response.status_code == 201, goal_response.text
+    goal = goal_response.json()
+    assert goal["progress"] == 20
+
+    update_response = client_override.put(
+        f"/personal/goals/{goal['id']}",
+        json={"progress": 50, "status": "active"},
+    )
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["progress"] == 50
+
+    habit_response = client_override.post(
+        "/personal/habits",
+        json={"title": "Ler", "target_per_week": 4},
+    )
+    assert habit_response.status_code == 201, habit_response.text
+    habit = habit_response.json()
+    checkin_response = client_override.post(
+        f"/personal/habits/{habit['id']}/checkins",
+        json={},
+    )
+    assert checkin_response.status_code == 200, checkin_response.text
+    assert len(checkin_response.json()["checkins"]) == 1
+
+    listing = client_override.get("/personal/habits")
+    assert listing.status_code == 200, listing.text
+    assert listing.json()[0]["title"] == "Ler"

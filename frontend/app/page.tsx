@@ -24,7 +24,43 @@ type Entry = {
   duration_minutes: number | null;
   intensity: string | null;
   location: string | null;
+  structured_data: {
+    schema_version?: number;
+    type?: string;
+    subtype?: string;
+    intensity?: string;
+    tags?: string[];
+    mood?: string;
+    energy?: string;
+    people?: string[];
+    context?: string;
+    extras?: Record<string, string>;
+  };
   created_at: string;
+};
+
+type Goal = {
+  id: string;
+  title: string;
+  description: string | null;
+  reason: string | null;
+  due_date: string | null;
+  metric: string | null;
+  progress: number;
+  status: "active" | "completed" | "paused" | "cancelled";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type Habit = {
+  id: string;
+  title: string;
+  description: string | null;
+  target_per_week: number;
+  active: boolean;
+  created_at: string;
+  checkins: { id: string; checked_on: string; note: string | null }[];
 };
 
 type Person = {
@@ -101,10 +137,21 @@ export default function Home() {
   const [entryDate, setEntryDate] = useState("");
   const [entryDurationMinutes, setEntryDurationMinutes] = useState("");
   const [entryIntensity, setEntryIntensity] = useState("");
+  const [entrySubtype, setEntrySubtype] = useState("");
+  const [entryTags, setEntryTags] = useState("");
+  const [entryMood, setEntryMood] = useState("");
+  const [entryEnergy, setEntryEnergy] = useState("");
   const [entryLocation, setEntryLocation] = useState("");
   const [content, setContent] = useState("");
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [retrospective, setRetrospective] = useState<{ days: number; total_entries: number; by_type: Record<string, number>; entries: Entry[] } | null>(null);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [habits, setHabits] = useState<Habit[]>([]);
+  const [goalTitle, setGoalTitle] = useState("");
+  const [goalDescription, setGoalDescription] = useState("");
+  const [goalDueDate, setGoalDueDate] = useState("");
+  const [habitTitle, setHabitTitle] = useState("");
+  const [habitTarget, setHabitTarget] = useState("1");
   const [message, setMessage] = useState("");
   const [peopleQuery, setPeopleQuery] = useState("");
   const [people, setPeople] = useState<Person[]>([]);
@@ -212,6 +259,16 @@ export default function Home() {
     if (response.ok) {
       setRetrospective(await response.json());
     }
+  }, [api, token]);
+
+  const loadPersonal = useCallback(async () => {
+    if (!token) return;
+    const [goalsResponse, habitsResponse] = await Promise.all([
+      api("/personal/goals"),
+      api("/personal/habits"),
+    ]);
+    if (goalsResponse.ok) setGoals(await goalsResponse.json());
+    if (habitsResponse.ok) setHabits(await habitsResponse.json());
   }, [api, token]);
 
   const loadSocial = useCallback(async () => {
@@ -337,6 +394,14 @@ export default function Home() {
       duration_minutes: entryDurationMinutes ? Number(entryDurationMinutes) : null,
       intensity: entryIntensity || null,
       location: entryLocation || null,
+      structured_data: {
+        type: entryType,
+        subtype: entrySubtype.trim() || null,
+        intensity: entryIntensity.trim() || null,
+        tags: entryTags.split(",").map((tag) => tag.trim()).filter(Boolean),
+        mood: entryMood.trim() || null,
+        energy: entryEnergy.trim() || null,
+      },
     };
 
     const response = await api(
@@ -359,12 +424,68 @@ export default function Home() {
     setEntryDate("");
     setEntryDurationMinutes("");
     setEntryIntensity("");
+    setEntrySubtype("");
+    setEntryTags("");
+    setEntryMood("");
+    setEntryEnergy("");
     setEntryLocation("");
     setContent("");
     setEditingEntryId(null);
     setMessage(editingEntryId ? "Registro atualizado." : "Registro salvo.");
     await loadEntries(entryFilter);
     await loadRetrospective();
+  }
+
+  async function createGoal() {
+    if (!goalTitle.trim()) return;
+    const response = await api("/personal/goals", {
+      method: "POST",
+      body: JSON.stringify({
+        title: goalTitle.trim(),
+        description: goalDescription.trim() || null,
+        due_date: goalDueDate || null,
+      }),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      setMessage(errorMessage(data.detail, "Não foi possível criar o objetivo."));
+      return;
+    }
+    setGoalTitle("");
+    setGoalDescription("");
+    setGoalDueDate("");
+    await loadPersonal();
+  }
+
+  async function updateGoal(goal: Goal, updates: Partial<Goal>) {
+    const response = await api(`/personal/goals/${goal.id}`, {
+      method: "PUT",
+      body: JSON.stringify(updates),
+    });
+    if (response.ok) await loadPersonal();
+  }
+
+  async function createHabit() {
+    if (!habitTitle.trim()) return;
+    const response = await api("/personal/habits", {
+      method: "POST",
+      body: JSON.stringify({ title: habitTitle.trim(), target_per_week: Number(habitTarget) }),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      setMessage(errorMessage(data.detail, "Não foi possível criar o hábito."));
+      return;
+    }
+    setHabitTitle("");
+    await loadPersonal();
+  }
+
+  async function checkinHabit(habit: Habit) {
+    const response = await api(`/personal/habits/${habit.id}/checkins`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (response.ok) await loadPersonal();
   }
 
   function startEditingEntry(entry: Entry) {
@@ -374,6 +495,10 @@ export default function Home() {
     setEntryDate(entry.date ?? "");
     setEntryDurationMinutes(entry.duration_minutes ? String(entry.duration_minutes) : "");
     setEntryIntensity(entry.intensity ?? "");
+    setEntrySubtype(entry.structured_data.subtype ?? "");
+    setEntryTags(entry.structured_data.tags?.join(", ") ?? "");
+    setEntryMood(entry.structured_data.mood ?? "");
+    setEntryEnergy(entry.structured_data.energy ?? "");
     setEntryLocation(entry.location ?? "");
     setContent(entry.content ?? "");
     setMessage("Editando registro.");
@@ -386,6 +511,10 @@ export default function Home() {
     setEntryDate("");
     setEntryDurationMinutes("");
     setEntryIntensity("");
+    setEntrySubtype("");
+    setEntryTags("");
+    setEntryMood("");
+    setEntryEnergy("");
     setEntryLocation("");
     setContent("");
     setMessage("");
@@ -528,6 +657,7 @@ export default function Home() {
     start();
     loadEntries(entryFilter);
     loadRetrospective();
+    loadPersonal();
     loadSocial();
     loadIncomingMoments();
     loadReceivedMessages();
@@ -546,7 +676,7 @@ export default function Home() {
         heartbeat.current = null;
       }
     };
-  }, [token, start, entryFilter, loadEntries, loadRetrospective, loadSocial, loadIncomingMoments, loadReceivedMessages, loadProfile]);
+  }, [token, start, entryFilter, loadEntries, loadRetrospective, loadPersonal, loadSocial, loadIncomingMoments, loadReceivedMessages, loadProfile]);
 
   useEffect(() => {
     if (!activeConversationId) {
@@ -729,6 +859,36 @@ export default function Home() {
           />
         </div>
 
+        <div style={row}>
+          <input
+            value={entrySubtype}
+            onChange={(e) => setEntrySubtype(e.target.value)}
+            placeholder="Subtipo"
+            style={{ ...input, flex: 1 }}
+          />
+          <input
+            value={entryTags}
+            onChange={(e) => setEntryTags(e.target.value)}
+            placeholder="Tags separados por vírgula"
+            style={{ ...input, flex: 2 }}
+          />
+        </div>
+
+        <div style={row}>
+          <input
+            value={entryMood}
+            onChange={(e) => setEntryMood(e.target.value)}
+            placeholder="Humor"
+            style={{ ...input, flex: 1 }}
+          />
+          <input
+            value={entryEnergy}
+            onChange={(e) => setEntryEnergy(e.target.value)}
+            placeholder="Energia"
+            style={{ ...input, flex: 1 }}
+          />
+        </div>
+
         <textarea
           rows={5}
           disabled={!active}
@@ -869,6 +1029,8 @@ export default function Home() {
             <p><strong>{entry.title || "Registro"}</strong></p>
             <p><small>{entry.entry_type}</small></p>
             {entry.intensity && <p><small>Intensidade: {entry.intensity}</small></p>}
+            {entry.structured_data.subtype && <p><small>Subtipo: {entry.structured_data.subtype}</small></p>}
+            {entry.structured_data.tags && entry.structured_data.tags.length > 0 && <p><small>Tags: {entry.structured_data.tags.join(", ")}</small></p>}
             <p>{entry.content || "Sem descrição adicional."}</p>
             <div style={row}>
               <button onClick={() => startEditingEntry(entry)} style={secondary}>Editar</button>
@@ -900,6 +1062,53 @@ export default function Home() {
         ) : (
           <p>Carregando retrospectiva...</p>
         )}
+      </section>
+
+      <section style={card}>
+        <h2>Objetivos</h2>
+        <div style={row}>
+          <input value={goalTitle} onChange={(e) => setGoalTitle(e.target.value)} placeholder="Novo objetivo" style={input} />
+          <input type="date" value={goalDueDate} onChange={(e) => setGoalDueDate(e.target.value)} style={input} />
+        </div>
+        <textarea value={goalDescription} onChange={(e) => setGoalDescription(e.target.value)} placeholder="Por que isso importa ou como pretende avançar?" rows={3} style={textarea} />
+        <button disabled={!active} onClick={createGoal} style={button}>Criar objetivo</button>
+        {goals.length === 0 && <p>Nenhum objetivo criado.</p>}
+        {goals.map((goal) => (
+          <article key={goal.id} style={personCard}>
+            <strong>{goal.title}</strong>
+            {goal.due_date && <small> · prazo {new Date(`${goal.due_date}T12:00:00`).toLocaleDateString("pt-BR")}</small>}
+            {goal.description && <p>{goal.description}</p>}
+            <label style={fieldLabel}>
+              Progresso: {goal.progress}%
+              <input type="range" min={0} max={100} value={goal.progress} onChange={(e) => void updateGoal(goal, { progress: Number(e.target.value) })} style={{ width: "100%" }} />
+            </label>
+            <select value={goal.status} onChange={(e) => void updateGoal(goal, { status: e.target.value as Goal["status"] })} style={select}>
+              <option value="active">Em andamento</option>
+              <option value="completed">Concluído</option>
+              <option value="paused">Pausado</option>
+              <option value="cancelled">Cancelado</option>
+            </select>
+          </article>
+        ))}
+      </section>
+
+      <section style={card}>
+        <h2>Hábitos</h2>
+        <div style={row}>
+          <input value={habitTitle} onChange={(e) => setHabitTitle(e.target.value)} placeholder="Novo hábito" style={input} />
+          <input type="number" min={1} max={7} value={habitTarget} onChange={(e) => setHabitTarget(e.target.value)} aria-label="Frequência semanal" style={{ ...input, maxWidth: 120 }} />
+          <button disabled={!active} onClick={createHabit} style={button}>Criar hábito</button>
+        </div>
+        {habits.length === 0 && <p>Nenhum hábito criado.</p>}
+        {habits.map((habit) => (
+          <article key={habit.id} style={personCard}>
+            <strong>{habit.title}</strong>
+            <p>{habit.checkins.length} registro(s) nos últimos 7 dias · meta de {habit.target_per_week}/semana</p>
+            <button disabled={!active || habit.checkins.some((item) => item.checked_on === new Date().toISOString().slice(0, 10))} onClick={() => void checkinHabit(habit)} style={secondary}>
+              Registrar hoje
+            </button>
+          </article>
+        ))}
       </section>
 
       <section style={card}>

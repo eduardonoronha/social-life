@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
-from app.api import auth, life, realtime, social, usage, profile, ai
+from app.api import auth, life, realtime, social, usage, profile, ai, personal
 from app.services.storage import init_storage
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ app.include_router(social.router)
 app.include_router(usage.router)
 app.include_router(profile.router)
 app.include_router(ai.router)
+app.include_router(personal.router)
 app.include_router(realtime.router)
 
 
