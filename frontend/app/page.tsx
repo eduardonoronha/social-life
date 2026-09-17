@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { EntryFormModal, GoalFormModal, HabitFormModal, ShareFormModal } from "../components/forms";
+import { PlusButton, SectionHeading, SectionTabs } from "../components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -113,6 +115,7 @@ type Profile = {
 };
 
 type ShareAudience = "person" | "people" | "group" | "connections";
+type Section = "home" | "me" | "us" | "profile";
 
 function fmt(s: number) {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
@@ -129,6 +132,8 @@ export default function Home() {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
+  const [section, setSection] = useState<Section>("home");
+  const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [entryFilter, setEntryFilter] = useState("all");
@@ -169,6 +174,10 @@ export default function Home() {
   const [shareAudience, setShareAudience] = useState<ShareAudience>("person");
   const [shareRecipients, setShareRecipients] = useState<string[]>([]);
   const [shareGroupId, setShareGroupId] = useState("");
+  const [mySharedMoments, setMySharedMoments] = useState<SharedMoment[]>([]);
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isHabitModalOpen, setIsHabitModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const heartbeat = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const api = useCallback(async (path: string, init: RequestInit = {}) => {
@@ -287,6 +296,12 @@ export default function Home() {
     if (response.ok) setSharedMoments(await response.json());
   }, [api, token]);
 
+  const loadMyMoments = useCallback(async () => {
+    if (!token) return;
+    const response = await api("/social/moments");
+    if (response.ok) setMySharedMoments(await response.json());
+  }, [api, token]);
+
   const loadReceivedMessages = useCallback(async () => {
     if (!token) return;
     const response = await api("/social/messages/inbox");
@@ -378,6 +393,32 @@ export default function Home() {
     }
   }
 
+  function resetEntryForm() {
+    setEntryType("note");
+    setEntryTitle("");
+    setEntryDate("");
+    setEntryDurationMinutes("");
+    setEntryIntensity("");
+    setEntrySubtype("");
+    setEntryTags("");
+    setEntryMood("");
+    setEntryEnergy("");
+    setEntryLocation("");
+    setContent("");
+    setEditingEntryId(null);
+  }
+
+  function openNewEntryModal() {
+    resetEntryForm();
+    setIsEntryModalOpen(true);
+    setMessage("");
+  }
+
+  function openEditEntryModal(entry: Entry) {
+    startEditingEntry(entry);
+    setIsEntryModalOpen(true);
+  }
+
   async function addEntry() {
     const value = content.trim();
     const title = entryTitle.trim();
@@ -419,18 +460,8 @@ export default function Home() {
       return;
     }
 
-    setEntryType("note");
-    setEntryTitle("");
-    setEntryDate("");
-    setEntryDurationMinutes("");
-    setEntryIntensity("");
-    setEntrySubtype("");
-    setEntryTags("");
-    setEntryMood("");
-    setEntryEnergy("");
-    setEntryLocation("");
-    setContent("");
-    setEditingEntryId(null);
+    resetEntryForm();
+    setIsEntryModalOpen(false);
     setMessage(editingEntryId ? "Registro atualizado." : "Registro salvo.");
     await loadEntries(entryFilter);
     await loadRetrospective();
@@ -454,6 +485,7 @@ export default function Home() {
     setGoalTitle("");
     setGoalDescription("");
     setGoalDueDate("");
+    setIsGoalModalOpen(false);
     await loadPersonal();
   }
 
@@ -477,6 +509,8 @@ export default function Home() {
       return;
     }
     setHabitTitle("");
+    setHabitTarget("1");
+    setIsHabitModalOpen(false);
     await loadPersonal();
   }
 
@@ -505,18 +539,8 @@ export default function Home() {
   }
 
   function cancelEditingEntry() {
-    setEditingEntryId(null);
-    setEntryType("note");
-    setEntryTitle("");
-    setEntryDate("");
-    setEntryDurationMinutes("");
-    setEntryIntensity("");
-    setEntrySubtype("");
-    setEntryTags("");
-    setEntryMood("");
-    setEntryEnergy("");
-    setEntryLocation("");
-    setContent("");
+    resetEntryForm();
+    setIsEntryModalOpen(false);
     setMessage("");
   }
 
@@ -576,7 +600,9 @@ export default function Home() {
     setShareRecipients([]);
     setShareGroupId("");
     setShareAudience("person");
+    setIsShareModalOpen(false);
     setMessage("Compartilhamento enviado.");
+    await loadMyMoments();
   }
 
   async function sendPrivateMessage() {
@@ -660,12 +686,14 @@ export default function Home() {
     loadPersonal();
     loadSocial();
     loadIncomingMoments();
+    loadMyMoments();
     loadReceivedMessages();
     loadProfile();
 
     const refreshInterval = window.setInterval(() => {
       loadSocial();
       loadIncomingMoments();
+      loadMyMoments();
       loadReceivedMessages();
     }, 5000);
 
@@ -741,10 +769,14 @@ export default function Home() {
 
   if (!token) {
     return (
-      <main style={page}>
-        <h1>Minha Vida</h1>
-        <p>Entre para cuidar do que importa — e depois volte para a vida.</p>
-        <section style={card}>
+      <main style={authPage} data-auth-page>
+        <style>{`@media (max-width: 720px) { [data-auth-page] { display: block !important; padding: 28px 18px !important; } [data-auth-page] > div:first-child { margin: 24px 0 34px; } [data-auth-page] h1 { font-size: 42px !important; } }`}</style>
+        <div style={authIntro}>
+          <span style={eyebrow}>MINHA VIDA</span>
+          <h1 style={authTitle}>Um lugar para organizar o que importa.</h1>
+          <p>Registre sua vida, cuide das suas relações e saia quando terminar.</p>
+        </div>
+        <section style={authCard}>
           <h2>{authMode === "login" ? "Entrar" : "Criar conta"}</h2>
           {authMode === "register" && (
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" style={authInput} />
@@ -766,11 +798,24 @@ export default function Home() {
   const active = Boolean(usage?.active_session_id);
 
   return (
-    <main style={page}>
-      <h1>Minha Vida</h1>
-      <p>Registre o que importa. Depois, volte para a vida.</p>
+    <main style={page} data-shell>
+      <style>{`@media (max-width: 760px) { [data-shell] { padding: 24px 16px 56px !important; } [data-shell] nav { display: flex !important; overflow-x: auto; margin-right: -16px; padding-right: 16px !important; } [data-shell] nav button { min-width: 150px; } [data-shell] > div:nth-of-type(1) { display: block !important; } [data-shell] > div:nth-of-type(1) p { margin-top: 14px !important; } [data-shell] section[style*="grid-template-columns"] { display: block !important; } }`}</style>
+      <header style={topbar}>
+        <div>
+          <span style={eyebrow}>MINHA VIDA</span>
+          <h1 style={brandTitle}>Seu espaço pessoal</h1>
+        </div>
+        <div style={sessionBadge}>
+          <span style={{ ...statusDot, background: active ? "#58745d" : "#a6a9a4" }} />
+          {active ? "Sessão ativa" : "Sessão pausada"}
+        </div>
+      </header>
 
-      <section style={card}>
+      <SectionTabs section={section} onSelect={setSection} />
+      <SectionHeading section={section} />
+
+      {section === "home" && <>
+      <section style={heroCard}>
         <h2>Controle de tempo</h2>
 
         {usage && (
@@ -797,205 +842,21 @@ export default function Home() {
         )}
       </section>
 
+      <section style={gridTwo}>
       <section style={card}>
-        <h2>{editingEntryId ? "Editar registro" : "Novo registro"}</h2>
-
-        <label style={fieldLabel}>
-          Tipo
-          <select value={entryType} onChange={(e) => setEntryType(e.target.value)} style={select}>
-            <option value="note">Livre</option>
-            <option value="activity">Atividade</option>
-            <option value="exercise">Exercício</option>
-            <option value="study">Estudo</option>
-            <option value="reading">Leitura</option>
-            <option value="work">Trabalho</option>
-            <option value="project">Projeto</option>
-            <option value="meeting">Encontro</option>
-            <option value="travel">Viagem</option>
-            <option value="important_event">Acontecimento importante</option>
-            <option value="habit">Hábito</option>
-            <option value="goal_achieved">Meta atingida</option>
-            <option value="goal_missed">Meta não atingida</option>
-            <option value="learning">Aprendizado</option>
-          </select>
-        </label>
-
-        <input
-          value={entryTitle}
-          onChange={(e) => setEntryTitle(e.target.value)}
-          placeholder="Título do registro"
-          style={input}
-        />
-
-        <div style={row}>
-          <input
-            type="date"
-            value={entryDate}
-            onChange={(e) => setEntryDate(e.target.value)}
-            style={{ ...input, flex: 1 }}
-          />
-          <input
-            type="number"
-            min={1}
-            value={entryDurationMinutes}
-            onChange={(e) => setEntryDurationMinutes(e.target.value)}
-            placeholder="Duração (min)"
-            style={{ ...input, flex: 1 }}
-          />
-        </div>
-
-        <div style={row}>
-          <input
-            value={entryIntensity}
-            onChange={(e) => setEntryIntensity(e.target.value)}
-            placeholder="Intensidade"
-            style={{ ...input, flex: 1 }}
-          />
-          <input
-            value={entryLocation}
-            onChange={(e) => setEntryLocation(e.target.value)}
-            placeholder="Local"
-            style={{ ...input, flex: 1 }}
-          />
-        </div>
-
-        <div style={row}>
-          <input
-            value={entrySubtype}
-            onChange={(e) => setEntrySubtype(e.target.value)}
-            placeholder="Subtipo"
-            style={{ ...input, flex: 1 }}
-          />
-          <input
-            value={entryTags}
-            onChange={(e) => setEntryTags(e.target.value)}
-            placeholder="Tags separados por vírgula"
-            style={{ ...input, flex: 2 }}
-          />
-        </div>
-
-        <div style={row}>
-          <input
-            value={entryMood}
-            onChange={(e) => setEntryMood(e.target.value)}
-            placeholder="Humor"
-            style={{ ...input, flex: 1 }}
-          />
-          <input
-            value={entryEnergy}
-            onChange={(e) => setEntryEnergy(e.target.value)}
-            placeholder="Energia"
-            style={{ ...input, flex: 1 }}
-          />
-        </div>
-
-        <textarea
-          rows={5}
-          disabled={!active}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Descreva o que aconteceu, o que aprendeu ou o que precisa registrar."
-          style={textarea}
-        />
-
-        <div style={row}>
-          <button disabled={!active} onClick={addEntry} style={button}>
-            {editingEntryId ? "Salvar alterações" : "Registrar"}
-          </button>
-          {editingEntryId && (
-            <button onClick={cancelEditingEntry} style={secondary}>
-              Cancelar
-            </button>
-          )}
-        </div>
-
-        {message && <p>{message}</p>}
+        <h2>Atalhos</h2>
+        <p>Entre, registre algo importante e volte para o seu dia.</p>
+        <button onClick={() => setSection("me")} style={button}>Abrir Eu</button>
       </section>
-
-      <section style={card}>
-        <h2>Compartilhar</h2>
-        <p>Sem posts públicos. Escolha explicitamente com quem compartilhar.</p>
-
-        <label style={fieldLabel}>
-          Público
-          <select
-            value={shareAudience}
-            onChange={(e) => {
-              const next = e.target.value as ShareAudience;
-              setShareAudience(next);
-              if (next === "person") setShareRecipients([]);
-              if (next !== "people" && next !== "connections") setShareRecipients([]);
-            }}
-            style={select}
-          >
-            <option value="person">Uma pessoa</option>
-            <option value="people">Várias pessoas</option>
-            <option value="connections">Minha lista privada de conexões</option>
-            <option value="group">Um grupo</option>
-          </select>
-        </label>
-
-        {shareAudience === "group" ? (
-          <label style={fieldLabel}>
-            ID do grupo
-            <input
-              value={shareGroupId}
-              onChange={(e) => setShareGroupId(e.target.value)}
-              placeholder="Grupo opcional"
-              style={input}
-            />
-          </label>
-        ) : (
-          <div style={shareList}>
-            {connections.length === 0 && (
-              <p>Você precisa aceitar conexões para compartilhar com outras pessoas.</p>
-            )}
-            {connections.map((connection) => {
-              const selected = shareAudience === "person"
-                ? shareRecipients.includes(connection.person.id)
-                : shareRecipients.includes(connection.person.id);
-
-              return (
-                <label key={connection.id} style={checkLabelRow}>
-                  <input
-                    type={shareAudience === "person" ? "radio" : "checkbox"}
-                    checked={selected}
-                    onChange={() => {
-                      if (shareAudience === "person") {
-                        setShareRecipients([connection.person.id]);
-                        return;
-                      }
-
-                      setShareRecipients((current) =>
-                        current.includes(connection.person.id)
-                          ? current.filter((id) => id !== connection.person.id)
-                          : [...current, connection.person.id]
-                      );
-                    }}
-                  />
-                  <span>{connection.person.name}</span>
-                </label>
-              );
-            })}
-          </div>
-        )}
-
-        <textarea
-          rows={4}
-          disabled={!active}
-          value={shareContent}
-          onChange={(e) => setShareContent(e.target.value)}
-          placeholder="O que você quer compartilhar com o público escolhido?"
-          style={textarea}
-        />
-
-        <button disabled={!active} onClick={shareMoment} style={button}>
-          Enviar compartilhamento
-        </button>
       </section>
+      </>}
 
+      {section === "me" && <>
       <section style={card}>
-        <h2>Minha vida</h2>
+        <div style={{ ...row, alignItems: "center", justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Minha vida</h2>
+          <PlusButton label="Adicionar registro" onClick={openNewEntryModal} />
+        </div>
 
         <label style={fieldLabel}>
           Filtro por tipo
@@ -1033,8 +894,50 @@ export default function Home() {
             {entry.structured_data.tags && entry.structured_data.tags.length > 0 && <p><small>Tags: {entry.structured_data.tags.join(", ")}</small></p>}
             <p>{entry.content || "Sem descrição adicional."}</p>
             <div style={row}>
-              <button onClick={() => startEditingEntry(entry)} style={secondary}>Editar</button>
+              <button onClick={() => openEditEntryModal(entry)} style={secondary}>Editar</button>
             </div>
+          </article>
+        ))}
+      </section>
+
+      <section style={card}>
+        <div style={{ ...row, alignItems: "center", justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Objetivos</h2>
+          <PlusButton label="Adicionar objetivo" onClick={() => setIsGoalModalOpen(true)} />
+        </div>
+        {goals.length === 0 && <p>Nenhum objetivo criado.</p>}
+        {goals.map((goal) => (
+          <article key={goal.id} style={personCard}>
+            <strong>{goal.title}</strong>
+            {goal.due_date && <small> · prazo {new Date(`${goal.due_date}T12:00:00`).toLocaleDateString("pt-BR")}</small>}
+            {goal.description && <p>{goal.description}</p>}
+            <label style={fieldLabel}>
+              Progresso: {goal.progress}%
+              <input type="range" min={0} max={100} value={goal.progress} onChange={(e) => void updateGoal(goal, { progress: Number(e.target.value) })} style={{ width: "100%" }} />
+            </label>
+            <select value={goal.status} onChange={(e) => void updateGoal(goal, { status: e.target.value as Goal["status"] })} style={select}>
+              <option value="active">Em andamento</option>
+              <option value="completed">Concluído</option>
+              <option value="paused">Pausado</option>
+              <option value="cancelled">Cancelado</option>
+            </select>
+          </article>
+        ))}
+      </section>
+
+      <section style={card}>
+        <div style={{ ...row, alignItems: "center", justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Hábitos</h2>
+          <PlusButton label="Adicionar hábito" onClick={() => setIsHabitModalOpen(true)} />
+        </div>
+        {habits.length === 0 && <p>Nenhum hábito criado.</p>}
+        {habits.map((habit) => (
+          <article key={habit.id} style={personCard}>
+            <strong>{habit.title}</strong>
+            <p>{habit.checkins.length} registro(s) nos últimos 7 dias · meta de {habit.target_per_week}/semana</p>
+            <button disabled={!active || habit.checkins.some((item) => item.checked_on === new Date().toISOString().slice(0, 10))} onClick={() => void checkinHabit(habit)} style={secondary}>
+              Registrar hoje
+            </button>
           </article>
         ))}
       </section>
@@ -1064,49 +967,81 @@ export default function Home() {
         )}
       </section>
 
-      <section style={card}>
-        <h2>Objetivos</h2>
-        <div style={row}>
-          <input value={goalTitle} onChange={(e) => setGoalTitle(e.target.value)} placeholder="Novo objetivo" style={input} />
-          <input type="date" value={goalDueDate} onChange={(e) => setGoalDueDate(e.target.value)} style={input} />
-        </div>
-        <textarea value={goalDescription} onChange={(e) => setGoalDescription(e.target.value)} placeholder="Por que isso importa ou como pretende avançar?" rows={3} style={textarea} />
-        <button disabled={!active} onClick={createGoal} style={button}>Criar objetivo</button>
-        {goals.length === 0 && <p>Nenhum objetivo criado.</p>}
-        {goals.map((goal) => (
-          <article key={goal.id} style={personCard}>
-            <strong>{goal.title}</strong>
-            {goal.due_date && <small> · prazo {new Date(`${goal.due_date}T12:00:00`).toLocaleDateString("pt-BR")}</small>}
-            {goal.description && <p>{goal.description}</p>}
-            <label style={fieldLabel}>
-              Progresso: {goal.progress}%
-              <input type="range" min={0} max={100} value={goal.progress} onChange={(e) => void updateGoal(goal, { progress: Number(e.target.value) })} style={{ width: "100%" }} />
-            </label>
-            <select value={goal.status} onChange={(e) => void updateGoal(goal, { status: e.target.value as Goal["status"] })} style={select}>
-              <option value="active">Em andamento</option>
-              <option value="completed">Concluído</option>
-              <option value="paused">Pausado</option>
-              <option value="cancelled">Cancelado</option>
-            </select>
-          </article>
-        ))}
-      </section>
+      <EntryFormModal
+        open={isEntryModalOpen}
+        onClose={() => setIsEntryModalOpen(false)}
+        active={active}
+        editingEntryId={editingEntryId}
+        message={message}
+        entryType={entryType}
+        setEntryType={setEntryType}
+        entryTitle={entryTitle}
+        setEntryTitle={setEntryTitle}
+        entryDate={entryDate}
+        setEntryDate={setEntryDate}
+        entryDurationMinutes={entryDurationMinutes}
+        setEntryDurationMinutes={setEntryDurationMinutes}
+        entryIntensity={entryIntensity}
+        setEntryIntensity={setEntryIntensity}
+        entryLocation={entryLocation}
+        setEntryLocation={setEntryLocation}
+        entrySubtype={entrySubtype}
+        setEntrySubtype={setEntrySubtype}
+        entryTags={entryTags}
+        setEntryTags={setEntryTags}
+        entryMood={entryMood}
+        setEntryMood={setEntryMood}
+        entryEnergy={entryEnergy}
+        setEntryEnergy={setEntryEnergy}
+        content={content}
+        setContent={setContent}
+        onSubmit={addEntry}
+        onCancel={cancelEditingEntry}
+      />
 
+      <GoalFormModal
+        open={isGoalModalOpen}
+        onClose={() => setIsGoalModalOpen(false)}
+        active={active}
+        goalTitle={goalTitle}
+        setGoalTitle={setGoalTitle}
+        goalDueDate={goalDueDate}
+        setGoalDueDate={setGoalDueDate}
+        goalDescription={goalDescription}
+        setGoalDescription={setGoalDescription}
+        onSubmit={createGoal}
+      />
+
+      <HabitFormModal
+        open={isHabitModalOpen}
+        onClose={() => setIsHabitModalOpen(false)}
+        active={active}
+        habitTitle={habitTitle}
+        setHabitTitle={setHabitTitle}
+        habitTarget={habitTarget}
+        setHabitTarget={setHabitTarget}
+        onSubmit={createHabit}
+      />
+      </>}
+
+      {section === "us" && <>
       <section style={card}>
-        <h2>Hábitos</h2>
-        <div style={row}>
-          <input value={habitTitle} onChange={(e) => setHabitTitle(e.target.value)} placeholder="Novo hábito" style={input} />
-          <input type="number" min={1} max={7} value={habitTarget} onChange={(e) => setHabitTarget(e.target.value)} aria-label="Frequência semanal" style={{ ...input, maxWidth: 120 }} />
-          <button disabled={!active} onClick={createHabit} style={button}>Criar hábito</button>
+        <div style={{ ...row, alignItems: "center", justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Compartilhar</h2>
+          <button
+            aria-label="Adicionar compartilhamento"
+            onClick={() => setIsShareModalOpen(true)}
+            style={{ ...button, minWidth: "fit-content", width: 42, height: 42, padding: 0, borderRadius: "50%", fontSize: 28, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
+            ＋
+          </button>
         </div>
-        {habits.length === 0 && <p>Nenhum hábito criado.</p>}
-        {habits.map((habit) => (
-          <article key={habit.id} style={personCard}>
-            <strong>{habit.title}</strong>
-            <p>{habit.checkins.length} registro(s) nos últimos 7 dias · meta de {habit.target_per_week}/semana</p>
-            <button disabled={!active || habit.checkins.some((item) => item.checked_on === new Date().toISOString().slice(0, 10))} onClick={() => void checkinHabit(habit)} style={secondary}>
-              Registrar hoje
-            </button>
+        <p>Sem posts públicos. Escolha explicitamente com quem compartilhar.</p>
+        {mySharedMoments.length === 0 && <p>Você ainda não compartilhou nada.</p>}
+        {mySharedMoments.map((moment) => (
+          <article key={moment.id} style={personCard}>
+            <small>{new Date(moment.created_at).toLocaleString("pt-BR")}</small>
+            <p>{moment.content}</p>
           </article>
         ))}
       </section>
@@ -1236,6 +1171,24 @@ export default function Home() {
         ))}
       </section>
 
+      <ShareFormModal
+        open={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        active={active}
+        shareAudience={shareAudience}
+        setShareAudience={setShareAudience}
+        shareRecipients={shareRecipients}
+        setShareRecipients={setShareRecipients}
+        connections={connections}
+        shareGroupId={shareGroupId}
+        setShareGroupId={setShareGroupId}
+        shareContent={shareContent}
+        setShareContent={setShareContent}
+        onSubmit={shareMoment}
+      />
+      </>}
+
+      {section === "profile" && <>
       {profile && (
         <section style={card}>
           <h2>Meu perfil</h2>
@@ -1294,23 +1247,53 @@ export default function Home() {
           </article>
         ))}
       </section>
+      </>}
     </main>
   );
 }
 
 const page = {
-  maxWidth: 720,
-  margin: "40px auto",
-  padding: 24,
+  maxWidth: 1180,
+  margin: "0 auto",
+  padding: "34px 28px 72px",
 };
 
 const card = {
-  background: "white",
-  border: "1px solid #ddd",
-  borderRadius: 12,
-  padding: 20,
-  margin: "20px 0",
+  background: "#ffffff",
+  border: "1px solid #d9dfda",
+  borderRadius: 10,
+  padding: 26,
+  margin: "18px 0",
+  boxShadow: "0 8px 24px rgba(33, 53, 47, 0.05)",
 };
+
+const authPage = {
+  minHeight: "100vh",
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 420px)",
+  gap: 64,
+  alignItems: "center",
+  maxWidth: 980,
+  margin: "0 auto",
+  padding: "48px 28px",
+};
+
+const authIntro = { maxWidth: 520 };
+const authTitle = { fontSize: 54, lineHeight: 1.04, margin: "14px 0 18px", letterSpacing: 0, fontWeight: 500 };
+const authCard = { ...card, margin: 0, padding: 30 };
+const eyebrow = { fontSize: 11, letterSpacing: 2, fontWeight: 700, color: "#668174" };
+const topbar = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20, marginBottom: 30 };
+const brandTitle = { margin: "6px 0 0", fontSize: 28, fontWeight: 500, letterSpacing: 0 };
+const sessionBadge = { display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", border: "1px solid #d9dfda", borderRadius: 999, color: "#587068", fontFamily: "system-ui, sans-serif", fontSize: 12 };
+const statusDot = { width: 8, height: 8, borderRadius: "50%" };
+const nav = { display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 8, padding: 8, background: "#e7ece8", borderRadius: 12, marginBottom: 42 };
+const navItem = { textAlign: "left" as const, border: 0, background: "transparent", color: "#61716a", padding: "13px 14px", borderRadius: 8, cursor: "pointer", fontFamily: "system-ui, sans-serif" };
+const activeNavItem = { ...navItem, background: "#ffffff", color: "#213d35", boxShadow: "0 3px 10px rgba(33, 53, 47, 0.08)" };
+const sectionHeading = { display: "flex", justifyContent: "space-between", alignItems: "end", gap: 32, marginBottom: 18 };
+const pageTitle = { fontSize: 42, lineHeight: 1.1, margin: "8px 0 0", fontWeight: 500, letterSpacing: 0 };
+const sectionDescription = { maxWidth: 360, margin: 0, color: "#68756f", fontFamily: "system-ui, sans-serif", fontSize: 14, lineHeight: 1.5 };
+const heroCard = { ...card, background: "#29473d", color: "#f5f7f4", border: "none", padding: 30 };
+const gridTwo = { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 2 };
 
 const textarea = {
   display: "block",
@@ -1318,23 +1301,30 @@ const textarea = {
   boxSizing: "border-box" as const,
   padding: 12,
   marginBottom: 12,
-  border: "1px solid #ccc",
-  borderRadius: 8,
+  border: "1px solid #ccd6d0",
+  borderRadius: 6,
+  font: "inherit",
 };
 
 const button = {
-  padding: "10px 16px",
-  border: 0,
-  borderRadius: 8,
+  padding: "11px 17px",
+  border: "1px solid #29473d",
+  borderRadius: 6,
   cursor: "pointer",
+  background: "#29473d",
+  color: "#ffffff",
+  fontFamily: "system-ui, sans-serif",
+  fontWeight: 650,
 };
 
 const secondary = {
   padding: "10px 16px",
-  border: "1px solid #aaa",
-  borderRadius: 8,
+  border: "1px solid #b9c6bf",
+  borderRadius: 6,
   cursor: "pointer",
-  background: "white",
+  background: "#ffffff",
+  color: "#29473d",
+  fontFamily: "system-ui, sans-serif",
 };
 
 const row = {
@@ -1348,8 +1338,9 @@ const input = {
   flex: 1,
   minWidth: 180,
   padding: 10,
-  border: "1px solid #ccc",
-  borderRadius: 8,
+  border: "1px solid #ccd6d0",
+  borderRadius: 6,
+  font: "inherit",
 };
 
 const authInput = {
@@ -1358,8 +1349,9 @@ const authInput = {
   boxSizing: "border-box" as const,
   padding: 10,
   marginBottom: 10,
-  border: "1px solid #ccc",
-  borderRadius: 8,
+  border: "1px solid #ccd6d0",
+  borderRadius: 6,
+  font: "inherit",
 };
 
 const checkLabel = {
@@ -1370,7 +1362,8 @@ const checkLabel = {
 const fieldLabel = {
   display: "block",
   marginBottom: 12,
-  fontWeight: 600,
+  fontWeight: 650,
+  fontFamily: "system-ui, sans-serif",
 };
 
 const select = {
@@ -1379,8 +1372,9 @@ const select = {
   boxSizing: "border-box" as const,
   padding: 10,
   marginTop: 8,
-  border: "1px solid #ccc",
-  borderRadius: 8,
+  border: "1px solid #ccd6d0",
+  borderRadius: 6,
+  font: "inherit",
 };
 
 const shareList = {
@@ -1398,7 +1392,7 @@ const messageList = {
 };
 
 const messageBubble = {
-  border: "1px solid #eee",
+  border: "1px solid #d9dfda",
   borderRadius: 8,
   padding: 12,
 };
